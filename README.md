@@ -25,8 +25,19 @@
 
 ---
 
+## 🗺️ Roadmap (Future Enhancements)
+
+The project is designed to be easily upgraded to a full-stack application. Future updates will include:
+
+- **Firebase Authentication**: Replacing the simple name entry with secure Google/Email login.
+- **Cloud Firestore**: Migrating the allEventsData catalog from a local file to a real-time database.
+- **Cloud Storage**: Hosting event posters and club logos online to reduce the app's installation size.
+- **Push Notifications**: Real-time alerts for new events in categories the user has selected.
+
+
 ## 📂 Project Structure
 
+```text
 
 lib/
 ├── screens/
@@ -40,15 +51,7 @@ lib/
 ├── data_model.dart              # Global state, Event classes, and Recommendation logic
 └── main.dart                    # App entry point and Theme configuration
 
-#🗺️ Roadmap (Future Enhancements)
 
-The project is designed to be easily upgraded to a full-stack application. Future updates will include:
 
--Firebase Authentication: Replacing the simple name entry with secure Google/Email login.
--Cloud Firestore: Migrating the allEventsData catalog from a local file to a real-time database.
--Cloud Storage: Hosting event posters and club logos online to reduce the app's installation size.
--Push Notifications: Real-time alerts for new events in categories the user has selected.
-
-```text
 
 
