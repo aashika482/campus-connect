@@ -6,7 +6,7 @@ class AllClubsPage extends StatelessWidget {
 
   // --- ⬇️ UPDATED LIST WITH YOUR 12 CLUB LOGOS ⬇️ ---
   final List<String> clubLogos = const [
-    'assets/images/club1.png', // This one will be clickable
+    'assets/images/club1.png', 
     'assets/images/club2.png',
     'assets/images/club3.png',
     'assets/images/club4.png',
