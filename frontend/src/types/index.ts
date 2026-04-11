@@ -1,3 +1,6 @@
+// frontend/src/types/index.ts
+// REPLACE your existing file with this
+
 // ── Auth / User ──────────────────────────────────────────
 export type UserRole = 'student' | 'member'
 
@@ -75,6 +78,26 @@ export interface Event {
   poster_url?: string
   is_hot: boolean
   created_at: string
+
+  // ── New fields ──
+  venue?: string
+  time_info?: string
+  registration_fee?: string
+  prize_pool?: string
+  contact_info?: string
+}
+
+// ── Discussion ───────────────────────────────────────────
+export interface Discussion {
+  id: number
+  event_id: number
+  user_id: number
+  user_name: string
+  user_role: string       // "student" | "member"
+  content: string
+  parent_id: number | null
+  created_at: string
+  replies: Discussion[]
 }
 
 // ── UI helpers ───────────────────────────────────────────

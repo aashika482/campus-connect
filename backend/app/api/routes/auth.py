@@ -54,7 +54,8 @@ async def register_student(payload: RegisterStudentRequest, db: AsyncSession = D
         interests=",".join(payload.interests) if payload.interests else None,
     )
     db.add(user)
-    await db.flush()
+    await db.commit()
+    await db.refresh(user)
     return _make_token_response(user)
 
 
@@ -71,7 +72,8 @@ async def register_member(payload: RegisterMemberRequest, db: AsyncSession = Dep
         position=payload.position,
     )
     db.add(user)
-    await db.flush()
+    await db.commit()
+    await db.refresh(user)
     return _make_token_response(user)
 
 

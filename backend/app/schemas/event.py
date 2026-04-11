@@ -1,3 +1,6 @@
+# backend/app/schemas/event.py
+# REPLACE your existing file with this
+
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date, datetime
@@ -10,7 +13,7 @@ class ClubOut(BaseModel):
     abbr: str
     description: str
     color: str
-    tags: str           # comma-separated, split on frontend
+    tags: str
     member_count: int
     is_open: bool
     instagram: Optional[str] = None
@@ -47,11 +50,18 @@ class EventOut(BaseModel):
     end_date: date
     reg_deadline: Optional[date] = None
     date_display: str
-    tags: str           # comma-separated
+    tags: str
     team_size: Optional[str] = None
     poster_url: Optional[str] = None
     is_hot: bool
     created_at: datetime
+
+    # ── New fields ──
+    venue: Optional[str] = None
+    time_info: Optional[str] = None
+    registration_fee: Optional[str] = "Free"
+    prize_pool: Optional[str] = None
+    contact_info: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -69,6 +79,13 @@ class EventCreate(BaseModel):
     poster_url: Optional[str] = None
     is_hot: bool = False
 
+    # ── New fields ──
+    venue: Optional[str] = None
+    time_info: Optional[str] = None
+    registration_fee: Optional[str] = "Free"
+    prize_pool: Optional[str] = None
+    contact_info: Optional[str] = None
+
 
 class EventUpdate(BaseModel):
     title: Optional[str] = None
@@ -83,6 +100,13 @@ class EventUpdate(BaseModel):
     is_hot: Optional[bool] = None
     is_published: Optional[bool] = None
 
+    # ── New fields ──
+    venue: Optional[str] = None
+    time_info: Optional[str] = None
+    registration_fee: Optional[str] = None
+    prize_pool: Optional[str] = None
+    contact_info: Optional[str] = None
+
 
 class RegistrationStatus(BaseModel):
     event_id: int
@@ -92,3 +116,26 @@ class RegistrationStatus(BaseModel):
 class SaveStatus(BaseModel):
     event_id: int
     is_saved: bool
+
+
+# ── Discussion ───────────────────────────────────────────
+class DiscussionOut(BaseModel):
+    id: int
+    event_id: int
+    user_id: int
+    user_name: str
+    user_role: str
+    content: str
+    parent_id: Optional[int] = None
+    created_at: datetime
+    replies: List["DiscussionOut"] = []
+
+    model_config = {"from_attributes": True}
+
+
+class DiscussionCreate(BaseModel):
+    content: str
+
+
+class DiscussionReply(BaseModel):
+    content: str

@@ -1,6 +1,10 @@
+# backend/app/api/routes/events.py
+# REPLACE your existing file with this
+# Changes: added /{event_id}/registrations/count endpoint, updated create_event for new fields
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.orm import selectinload
 from typing import Optional
 
@@ -14,7 +18,7 @@ from app.schemas.event import EventOut, EventCreate, EventUpdate, RegistrationSt
 router = APIRouter()
 
 
-@router.get("/", response_model=list[EventOut])
+@router.get("", response_model=list[EventOut])
 async def list_events(
     tag: Optional[str] = Query(None),
     club_id: Optional[int] = Query(None),
@@ -41,19 +45,34 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     return event
 
 
-@router.post("/", response_model=EventOut, status_code=201)
+@router.post("", response_model=EventOut, status_code=201)
 async def create_event(
     payload: EventCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_club_member),
 ):
     event = Event(
-        **payload.model_dump(exclude={"tags"}),
+        title=payload.title,
+        description=payload.description,
+        club_id=payload.club_id,
+        club_name=user.club_name or "",
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        reg_deadline=payload.reg_deadline,
+        date_display=payload.date_display,
         tags=",".join(payload.tags),
-        club_name=payload.model_dump().get("club_name", ""),
+        team_size=payload.team_size,
+        poster_url=payload.poster_url,
+        is_hot=payload.is_hot,
+        venue=payload.venue,
+        time_info=payload.time_info,
+        registration_fee=payload.registration_fee,
+        prize_pool=payload.prize_pool,
+        contact_info=payload.contact_info,
     )
     db.add(event)
-    await db.flush()
+    await db.commit()
+    await db.refresh(event)
     return event
 
 
@@ -122,6 +141,19 @@ async def my_registrations(
         select(Registration.event_id).where(Registration.user_id == user.id)
     )
     return [r for r in result.scalars().all()]
+
+
+# ── Registration count (for event detail + admin dashboard) ──
+@router.get("/{event_id}/registrations/count")
+async def registration_count(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(func.count()).select_from(Registration).where(Registration.event_id == event_id)
+    )
+    count = result.scalar()
+    return {"event_id": event_id, "count": count}
 
 
 # ── Saved ────────────────────────────────────────────────

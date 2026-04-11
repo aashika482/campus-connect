@@ -8,6 +8,9 @@ export function useEvents(params?: object) {
   const [events, setEvents] = useState<Event[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
+
+  const refresh = useCallback(() => setTick(t => t + 1), [])
 
   useEffect(() => {
     setLoading(true)
@@ -15,9 +18,10 @@ export function useEvents(params?: object) {
       .then(r => setEvents(r.data))
       .catch(() => setError('Failed to load events'))
       .finally(() => setLoading(false))
-  }, [JSON.stringify(params)])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(params), tick])
 
-  return { events, loading, error }
+  return { events, loading, error, refresh }
 }
 
 export function useUserEvents() {
