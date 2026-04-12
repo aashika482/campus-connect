@@ -51,7 +51,7 @@ export function GlobalSearch({ onClose, onViewEvent, onViewClub }: Props) {
           <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input ref={ref} value={q} onChange={e => setQ(e.target.value)} placeholder="Search events, clubs, tags…"
             style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--cream)', fontSize: 16, fontFamily: 'var(--body)' }} />
-          <button onClick={onClose} style={{ color: 'var(--gray2)', padding: 4, fontSize: 9, fontFamily: 'var(--mono)', border: '1px solid var(--dark4)', padding: '3px 7px', letterSpacing: 1 }}>ESC</button>
+          <button onClick={onClose} style={{ color: 'var(--gray2)', fontSize: 9, fontFamily: 'var(--mono)', border: '1px solid var(--dark4)', padding: '3px 7px', letterSpacing: 1 }}>ESC</button>
         </div>
 
         {/* Results */}

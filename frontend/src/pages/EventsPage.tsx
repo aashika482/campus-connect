@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useEvents, useUserEvents } from '@/hooks/useData'
 import { splitTags, getEventColor, ALL_TAGS } from '@/types'
 import type { Event } from '@/types'
@@ -6,8 +7,21 @@ import type { Event } from '@/types'
 interface Props { onViewEvent: (ev: Event) => void }
 
 export function EventsPage({ onViewEvent }: Props) {
-  const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [activeTag, setActiveTag] = useState<string | null>(searchParams.get('tag'))
   const { events, loading } = useEvents(activeTag ? { tag: activeTag } : undefined)
+
+  // Sync URL param → active tag on mount / back-navigation
+  useEffect(() => {
+    const t = searchParams.get('tag')
+    setActiveTag(t)
+  }, [searchParams])
+
+  const handleTagSelect = (tag: string | null) => {
+    setActiveTag(tag)
+    if (tag) setSearchParams({ tag })
+    else setSearchParams({})
+  }
   const { registered, saved, toggleSave } = useUserEvents()
 
   return (
@@ -31,7 +45,7 @@ export function EventsPage({ onViewEvent }: Props) {
           {[{ id: null, label: 'All' }, ...ALL_TAGS].map(t => {
             const active = activeTag === t.id
             return (
-              <button key={String(t.id)} onClick={() => setActiveTag(t.id)}
+              <button key={String(t.id)} onClick={() => handleTagSelect(t.id)}
                 style={{ padding: '12px 16px', fontSize: 11, fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 1, color: active ? 'var(--orange)' : 'var(--gray2)', borderBottom: active ? '2px solid var(--orange)' : '2px solid transparent', marginBottom: -1, whiteSpace: 'nowrap', transition: 'all 0.15s' }}>
                 {t.label}
               </button>

@@ -1,3 +1,6 @@
+# backend/app/models/event.py
+# REPLACE your existing file with this
+
 from sqlalchemy import String, Boolean, Integer, Text, DateTime, Date, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, date
@@ -25,10 +28,18 @@ class Event(Base):
     is_hot:       Mapped[bool]      = mapped_column(Boolean, default=False)
     is_published: Mapped[bool]      = mapped_column(Boolean, default=True)
 
+    # ── New fields (Phase 1) ─────────────────────────────
+    venue:            Mapped[str|None]  = mapped_column(String(200), nullable=True)
+    time_info:        Mapped[str|None]  = mapped_column(String(100), nullable=True)
+    registration_fee: Mapped[str|None]  = mapped_column(String(50), default="Free")
+    prize_pool:       Mapped[str|None]  = mapped_column(String(200), nullable=True)
+    contact_info:     Mapped[str|None]  = mapped_column(Text, nullable=True)
+
     created_at:   Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at:   Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    club:          Mapped["Club"]            = relationship("Club",         back_populates="events")
+    club:          Mapped["Club"]               = relationship("Club",         back_populates="events")
     registrations: Mapped[list["Registration"]] = relationship("Registration", back_populates="event", cascade="all, delete-orphan")
     saved_by:      Mapped[list["SavedEvent"]]   = relationship("SavedEvent",   back_populates="event", cascade="all, delete-orphan")
+    discussions:   Mapped[list["Discussion"]]   = relationship("Discussion",   back_populates="event", cascade="all, delete-orphan")

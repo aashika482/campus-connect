@@ -12,7 +12,7 @@ from app.schemas.event import ClubOut, ClubCreate, ClubMembershipStatus
 router = APIRouter()
 
 
-@router.get("/", response_model=list[ClubOut])
+@router.get("", response_model=list[ClubOut])
 async def list_clubs(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Club).order_by(Club.name))
     return result.scalars().all()
@@ -27,7 +27,7 @@ async def get_club(club_id: int, db: AsyncSession = Depends(get_db)):
     return club
 
 
-@router.post("/", response_model=ClubOut, status_code=201)
+@router.post("", response_model=ClubOut, status_code=201)
 async def create_club(
     payload: ClubCreate,
     db: AsyncSession = Depends(get_db),
@@ -35,7 +35,8 @@ async def create_club(
 ):
     club = Club(**payload.model_dump(exclude={"tags"}), tags=",".join(payload.tags))
     db.add(club)
-    await db.flush()
+    await db.commit()
+    await db.refresh(club)
     return club
 
 

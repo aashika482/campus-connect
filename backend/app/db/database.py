@@ -1,9 +1,10 @@
+# backend/app/db/database.py
+# REPLACE your existing file with this (only change: added discussion import)
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
-
-# Neon uses postgres:// — SQLAlchemy async needs postgresql+asyncpg://
 
 
 def _make_async_url(url: str) -> str:
@@ -11,7 +12,6 @@ def _make_async_url(url: str) -> str:
         url = url.replace("postgres://", "postgresql+asyncpg://", 1)
     elif url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    # Strip params asyncpg can't handle — ssl is passed via connect_args instead
     for param in ("sslmode", "channel_binding"):
         import re
         url = re.sub(rf"[?&]{param}=[^&]*", "", url)
@@ -39,8 +39,8 @@ class Base(DeclarativeBase):
 
 
 async def create_tables():
-    """Create all tables on startup (dev-friendly). Use Alembic for production migrations."""
-    from app.models import user, club, event, membership  # noqa: F401
+    """Create all tables on startup (dev-friendly)."""
+    from app.models import user, club, event, membership, discussion  # ← added discussion
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

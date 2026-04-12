@@ -1,3 +1,7 @@
+// frontend/src/api/client.ts
+// REPLACE your existing file with this
+// Changes: added discussionsApi section
+
 import axios from 'axios'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
@@ -75,17 +79,18 @@ export const authApi = {
 
 // ── Events ───────────────────────────────────────────────
 export const eventsApi = {
-  list:         (params?: object)  => api.get('/events', { params }),
-  get:          (id: number)       => api.get(`/events/${id}`),
-  create:       (data: object)     => api.post('/events', data),
-  update:       (id: number, data: object) => api.patch(`/events/${id}`, data),
-  delete:       (id: number)       => api.delete(`/events/${id}`),
-  register:     (id: number)       => api.post(`/events/${id}/register`),
-  unregister:   (id: number)       => api.delete(`/events/${id}/register`),
-  myRegistered: ()                 => api.get('/events/me/registered'),
-  save:         (id: number)       => api.post(`/events/${id}/save`),
-  unsave:       (id: number)       => api.delete(`/events/${id}/save`),
-  mySaved:      ()                 => api.get('/events/me/saved'),
+  list:               (params?: object)          => api.get('/events', { params }),
+  get:                (id: number)               => api.get(`/events/${id}`),
+  create:             (data: object)             => api.post('/events', data),
+  update:             (id: number, data: object) => api.patch(`/events/${id}`, data),
+  delete:             (id: number)               => api.delete(`/events/${id}`),
+  register:           (id: number)               => api.post(`/events/${id}/register`),
+  unregister:         (id: number)               => api.delete(`/events/${id}/register`),
+  myRegistered:       ()                         => api.get('/events/me/registered'),
+  registrationCount:  (id: number)               => api.get(`/events/${id}/registrations/count`),
+  save:               (id: number)               => api.post(`/events/${id}/save`),
+  unsave:             (id: number)               => api.delete(`/events/${id}/save`),
+  mySaved:            ()                         => api.get('/events/me/saved'),
 }
 
 // ── Clubs ────────────────────────────────────────────────
@@ -101,4 +106,14 @@ export const clubsApi = {
 export const usersApi = {
   me:     ()           => api.get('/users/me'),
   update: (data: object) => api.patch('/users/me', data),
+}
+
+// ── Discussions ──────────────────────────────────────────
+export const discussionsApi = {
+  list:       (eventId: number)                          => api.get(`/discussions/${eventId}`),
+  create:     (eventId: number, data: { content: string }) => api.post(`/discussions/${eventId}`, data),
+  reply:      (eventId: number, commentId: number, data: { content: string }) =>
+                api.post(`/discussions/${eventId}/${commentId}/reply`, data),
+  delete:     (eventId: number, commentId: number)       => api.delete(`/discussions/${eventId}/${commentId}`),
+  adminFeed:  ()                                         => api.get('/discussions/admin/feed'),
 }

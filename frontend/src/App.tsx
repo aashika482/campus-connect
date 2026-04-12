@@ -1,20 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/context/authStore'
-import { useToastStore } from '@/context/toastStore'
 import { Nav } from '@/components/layout/Nav'
 import { ToastContainer } from '@/components/ui/Toast'
 
-// Pages (lazy-ish — just direct imports for now)
+// Pages
 import { LoginPage }    from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { HomePage }     from '@/pages/HomePage'
 import { EventsPage }   from '@/pages/EventsPage'
 import { ClubsPage }    from '@/pages/ClubsPage'
+import { EventDetailPage } from '@/pages/EventDetailPage'
+import { ClubDetailPage }  from '@/pages/ClubDetailPage'
 import { SavedPage, ProfilePage, CalendarPage, AdminPage } from '@/pages/OtherPages'
-
-
-
 
 import type { Event, Club } from '@/types'
 
@@ -37,23 +35,12 @@ function LoadingScreen() {
 
 export default function App() {
   const { initFromStorage, user, isInitialized } = useAuthStore()
-  const { toast } = useToastStore()
+  const navigate = useNavigate()
 
-  // Modal state — lifted here so Nav can open modals from search
-  const [viewEv,   setViewEv]   = useState<Event | null>(null)
-  const [viewClub, setViewClub] = useState<Club  | null>(null)
+  const handleViewEvent = (ev: Event) => navigate(`/events/${ev.id}`)
+  const handleViewClub  = (cl: Club)  => navigate(`/clubs/${cl.id}`)
 
   useEffect(() => { initFromStorage() }, [])
-
-  // Keyboard shortcut: Cmd/Ctrl+K → open search (handled in Nav itself)
-  // Escape to close modals
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setViewEv(null); setViewClub(null) }
-    }
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [])
 
   if (!isInitialized) return <LoadingScreen />
 
@@ -63,8 +50,8 @@ export default function App() {
 
       {user && (
         <Nav
-          onViewEvent={setViewEv}
-          onViewClub={setViewClub}
+          onViewEvent={handleViewEvent}
+          onViewClub={handleViewClub}
         />
       )}
 
@@ -77,27 +64,37 @@ export default function App() {
           {/* Protected */}
           <Route path="/" element={
             <ProtectedRoute>
-              <HomePage onViewEvent={setViewEv} />
+              <HomePage onViewEvent={handleViewEvent} />
             </ProtectedRoute>
           } />
           <Route path="/events" element={
             <ProtectedRoute>
-              <EventsPage onViewEvent={setViewEv} />
+              <EventsPage onViewEvent={handleViewEvent} />
+            </ProtectedRoute>
+          } />
+          <Route path="/events/:id" element={
+            <ProtectedRoute>
+              <EventDetailPage />
             </ProtectedRoute>
           } />
           <Route path="/clubs" element={
             <ProtectedRoute>
-              <ClubsPage onViewClub={setViewClub} />
+              <ClubsPage onViewClub={handleViewClub} />
+            </ProtectedRoute>
+          } />
+          <Route path="/clubs/:id" element={
+            <ProtectedRoute>
+              <ClubDetailPage />
             </ProtectedRoute>
           } />
           <Route path="/saved" element={
             <ProtectedRoute>
-              <SavedPage onViewEvent={setViewEv} />
+              <SavedPage onViewEvent={handleViewEvent} />
             </ProtectedRoute>
           } />
           <Route path="/calendar" element={
             <ProtectedRoute>
-              <CalendarPage onViewEvent={setViewEv} />
+              <CalendarPage onViewEvent={handleViewEvent} />
             </ProtectedRoute>
           } />
           <Route path="/profile" element={
@@ -114,10 +111,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
-
-      {/* Global modals would go here — wire EventModal & ClubModal from your prototype */}
-      {/* <EventModal ev={viewEv} onClose={() => setViewEv(null)} ... /> */}
-      {/* <ClubModal  club={viewClub} onClose={() => setViewClub(null)} ... /> */}
 
       <ToastContainer />
     </>

@@ -1,11 +1,14 @@
 // ClubsPage.tsx
+import { useNavigate } from 'react-router-dom'
 import { useClubs, useUserClubs } from '@/hooks/useData'
 import { splitTags } from '@/types'
 import type { Club } from '@/types'
 
-interface Props { onViewClub: (cl: Club) => void }
+// onViewClub kept for Nav/GlobalSearch compatibility — ClubsPage itself navigates directly
+interface Props { onViewClub?: (cl: Club) => void }
 
 export function ClubsPage({ onViewClub }: Props) {
+  const navigate = useNavigate()
   const { clubs, loading } = useClubs()
   const { joinedClubs, toggleMembership } = useUserClubs()
 
@@ -31,7 +34,7 @@ export function ClubsPage({ onViewClub }: Props) {
             {clubs.map((cl, i) => (
               <ClubCard key={cl.id} club={cl} delay={i * 30}
                 isMember={joinedClubs.includes(cl.id)}
-                onView={onViewClub}
+                onView={() => navigate(`/clubs/${cl.id}`)}
                 onToggle={toggleMembership} />
             ))}
           </div>
@@ -43,12 +46,12 @@ export function ClubsPage({ onViewClub }: Props) {
 
 function ClubCard({ club, delay, isMember, onView, onToggle }: {
   club: Club; delay: number; isMember: boolean;
-  onView: (c: Club) => void; onToggle: (c: Club) => void;
+  onView: () => void; onToggle: (c: Club) => void;
 }) {
   const tags = splitTags(club.tags)
   return (
     <div className="ccard au" style={{ '--cc': club.color, animationDelay: `${delay}ms` } as any}
-      onClick={() => onView(club)}>
+      onClick={onView}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
         <div style={{ width: 48, height: 48, background: `${club.color}18`, border: `1.5px solid ${club.color}44`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 700, color: club.color }}>{club.abbr.slice(0, 4)}</span>

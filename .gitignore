@@ -11,6 +11,10 @@ env/
 dist/
 build/
 
+#Sensitive credentials
+backend/.env
+frontend/.env
+
 # Node
 node_modules/
 dist/
