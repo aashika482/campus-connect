@@ -1,14 +1,12 @@
-import { useNavigate } from 'react-router-dom'
 import { useEvents, useUserEvents } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
-import { splitTags, getEventColor, TAG_COLORS } from '@/types'
+import { splitTags, getEventColor } from '@/types'
 import type { Event } from '@/types'
 
 interface Props { onViewEvent: (ev: Event) => void }
 
 export function HomePage({ onViewEvent }: Props) {
   const { user } = useAuthStore()
-  const navigate = useNavigate()
   const { events, loading } = useEvents()
   const { registered, saved, toggleSave, register } = useUserEvents()
 
@@ -17,7 +15,11 @@ export function HomePage({ onViewEvent }: Props) {
   const forYou    = userTags.length > 0
     ? events.filter(e => splitTags(e.tags).some(t => userTags.includes(t))).slice(0, 6)
     : events.slice(0, 6)
-  const upcoming  = [...events].sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime()).slice(0, 4)
+  const today     = new Date(); today.setHours(0, 0, 0, 0)
+  const upcoming  = [...events]
+    .filter(e => new Date(e.end_date ?? e.start_date) >= today)
+    .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
+    .slice(0, 4)
 
   if (loading) return <PageLoader />
 
@@ -75,20 +77,6 @@ export function HomePage({ onViewEvent }: Props) {
           </div>
         </Section>
 
-        {/* Tag filter strip */}
-        <Section title="Browse by Category" sub="">
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {Object.entries(TAG_COLORS).map(([tag, color]) => (
-              <button key={tag}
-                onClick={() => navigate(`/events?tag=${tag}`)}
-                style={{ padding: '7px 14px', fontSize: 11, fontFamily: 'var(--mono)', border: `1.5px solid ${color}44`, background: `${color}11`, color, borderRadius: 20, letterSpacing: 0.5, transition: 'all 0.15s', textTransform: 'capitalize', cursor: 'pointer' }}
-                onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = `${color}22` }}
-                onMouseOut={e =>  { (e.currentTarget as HTMLElement).style.background = `${color}11` }}>
-                {tag}
-              </button>
-            ))}
-          </div>
-        </Section>
 
       </div>
     </div>
