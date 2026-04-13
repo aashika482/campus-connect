@@ -43,3 +43,8 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/debug/cors")
+async def debug_cors():
+    return {"allowed_origins": settings.all_cors_origins, "frontend_urls_env": settings.FRONTEND_URLS}
