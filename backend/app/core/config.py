@@ -21,13 +21,17 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:3000",
     ]
-    FRONTEND_URL: str = ""  # e.g. https://campulse.vercel.app
+    # Comma-separated list of allowed frontend URLs for production
+    # e.g. https://campulse.vercel.app,https://campulse-git-main-user.vercel.app
+    FRONTEND_URLS: str = ""
 
     @property
     def all_cors_origins(self) -> List[str]:
         origins = list(self.CORS_ORIGINS)
-        if self.FRONTEND_URL:
-            origins.append(self.FRONTEND_URL.rstrip("/"))
+        for url in self.FRONTEND_URLS.split(","):
+            url = url.strip().rstrip("/")
+            if url:
+                origins.append(url)
         return origins
 
     class Config:
