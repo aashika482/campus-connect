@@ -16,11 +16,19 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # CORS
+    # CORS — add your deployed frontend URL here in production
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
     ]
+    FRONTEND_URL: str = ""  # e.g. https://campulse.vercel.app
+
+    @property
+    def all_cors_origins(self) -> List[str]:
+        origins = list(self.CORS_ORIGINS)
+        if self.FRONTEND_URL:
+            origins.append(self.FRONTEND_URL.rstrip("/"))
+        return origins
 
     class Config:
         env_file = ".env"
