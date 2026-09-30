@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
+import { fetchAllClubs } from '@/hooks/useData'
 import { ALL_TAGS } from '@/types'
-import type { UserRole } from '@/types'
+import type { UserRole, Club } from '@/types'
 
 type Step = 0 | 1 | 2   // 0=pick role, 1=details, 2=interests (student only)
 
@@ -19,7 +20,28 @@ export function RegisterPage() {
     name: '', email: '', password: '', reg_no: '', course: '', phone: '',
     club_name: '', position: '',
   })
+  // Club admins pick their club from the same list the Clubs page shows, so the
+  // stored club_name always matches exactly (ownership checks compare names as strings)
+  const [clubs, setClubs] = useState<Club[]>([])
+  const [clubsState, setClubsState] = useState<'idle' | 'loading' | 'error'>('idle')
+
+  const loadClubs = () => {
+    setClubsState('loading')
+    fetchAllClubs()   // the dropdown needs every club, so read all pages
+      .then(all => { setClubs(all); setClubsState('idle') })
+      .catch(() => setClubsState('error'))
+  }
+
+  useEffect(() => {
+    if (role === 'member' && clubs.length === 0) loadClubs()
+  }, [role])
+
   const u = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
+
+  // Same rule as the backend: spaces, dashes and a +91 / 0 prefix are fine, then 10 digits
+  const phoneDigits = form.phone.replace(/[\s\-()]/g, '').replace(/^(\+91|0)/, '')
+  const phoneValid = /^\d{10}$/.test(phoneDigits)
+  const [phoneTouched, setPhoneTouched] = useState(false)
   const ti = (id: string) => setInterests(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
 
   const handleSubmit = async () => {
@@ -32,7 +54,11 @@ export function RegisterPage() {
       toast('Welcome to CamPulse! 🎉', 'success')
       navigate('/')
     } catch (err: any) {
-      toast(err?.response?.data?.detail ?? 'Registration failed', 'error')
+      // 422 validation errors come back as a list: show the first message
+      const detail = err?.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail
+        : Array.isArray(detail) ? String(detail[0]?.msg ?? '').replace(/^Value error, /, '') : ''
+      toast(msg || 'Registration failed', 'error')
     }
   }
 
@@ -99,6 +125,12 @@ export function RegisterPage() {
               {field('name', 'Full Name', { placeholder: 'Your name' })}
               {field('email', 'Email', { placeholder: 'you@muj.manipal.edu' })}
               {field('password', 'Password', { placeholder: '••••••••', type: 'password' })}
+              <div onBlur={() => setPhoneTouched(true)}>
+                {field('phone', 'Phone Number', { placeholder: '98765 43210', type: 'tel' })}
+                {phoneTouched && form.phone && !phoneValid && (
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: '#EF4444', marginTop: 5 }}>Enter a valid 10-digit phone number</div>
+                )}
+              </div>
 
               {role === 'student' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -109,7 +141,27 @@ export function RegisterPage() {
 
               {role === 'member' && (
                 <>
-                  {field('club_name', 'Club Name', { placeholder: 'ACM Student Chapter' })}
+                  <div>
+                    <label style={{ display: 'block', fontSize: 10, fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 3, color: 'var(--gray2)', marginBottom: 5 }}>Club</label>
+                    <select
+                      className="inp"
+                      value={form.club_name}
+                      onChange={e => u('club_name', e.target.value)}
+                      disabled={clubsState !== 'idle'}
+                      style={{ cursor: 'pointer', color: form.club_name ? 'var(--cream)' : 'var(--gray2)' }}
+                    >
+                      <option value="" disabled>
+                        {clubsState === 'loading' ? 'Loading clubs…' : 'Select your club'}
+                      </option>
+                      {clubs.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                    {clubsState === 'error' && (
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: '#EF4444', marginTop: 6 }}>
+                        Couldn't load clubs.{' '}
+                        <button onClick={loadClubs} style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--orange)', textDecoration: 'underline', textUnderlineOffset: 3 }}>Retry</button>
+                      </div>
+                    )}
+                  </div>
                   {field('position', 'Position', { placeholder: 'President, Coordinator…' })}
                 </>
               )}
@@ -118,8 +170,8 @@ export function RegisterPage() {
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
               <button className="btn-g" onClick={() => setStep(0)}>← Back</button>
               {role === 'student'
-                ? <button className="btn-p" style={{ flex: 1 }} onClick={() => setStep(2)}>Continue →</button>
-                : <button className="btn-p" style={{ flex: 1 }} disabled={isLoading} onClick={handleSubmit}>{isLoading ? 'Creating…' : 'Create Account →'}</button>
+                ? <button className="btn-p" style={{ flex: 1 }} disabled={!phoneValid} onClick={() => setStep(2)}>Continue →</button>
+                : <button className="btn-p" style={{ flex: 1 }} disabled={isLoading || !form.club_name || !phoneValid} onClick={handleSubmit}>{isLoading ? 'Creating…' : 'Create Account →'}</button>
               }
             </div>
           </>

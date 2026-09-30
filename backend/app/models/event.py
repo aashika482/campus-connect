@@ -1,6 +1,3 @@
-# backend/app/models/event.py
-# REPLACE your existing file with this
-
 from sqlalchemy import String, Boolean, Integer, Text, DateTime, Date, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, date
@@ -31,7 +28,7 @@ class Event(Base):
     # ── New fields (Phase 1) ─────────────────────────────
     venue:            Mapped[str|None]  = mapped_column(String(200), nullable=True)
     time_info:        Mapped[str|None]  = mapped_column(String(100), nullable=True)
-    registration_fee: Mapped[str|None]  = mapped_column(String(50), default="Free")
+    registration_fee: Mapped[str|None]  = mapped_column(String(50), default="Free", server_default="Free")
     prize_pool:       Mapped[str|None]  = mapped_column(String(200), nullable=True)
     contact_info:     Mapped[str|None]  = mapped_column(Text, nullable=True)
 

@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/context/authStore'
+import { notificationsApi } from '@/api/client'
 import { GlobalSearch } from './GlobalSearch'
-import type { Event, Club } from '@/types'
+import { getTimeAgo } from '@/types'
+import type { Event, Club, Notification } from '@/types'
 
 const lp = { fill: 'none', stroke: 'currentColor', strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 
@@ -29,13 +31,7 @@ const NAV_ITEMS = [
   { path: '/saved',    label: 'Saved',    Icon: BkIco },
 ]
 
-const NOTIFS = [
-  { id: 1, text: 'HackX 3.0 registration closes in 3 days', time: '2h ago', read: false },
-  { id: 2, text: "TechnoUtsav '25 just dropped — check it out!", time: '5h ago', read: false },
-  { id: 3, text: "You're registered for MUN 2025 on Oct 25–26", time: '1d ago', read: true },
-  { id: 4, text: 'Startup Pitch Day is now open for applications', time: '1d ago', read: false },
-  { id: 5, text: 'Groove Nation team formation deadline this Sunday', time: '2d ago', read: true },
-]
+const NOTIF_POLL_MS = 60_000
 
 interface Props {
   onViewEvent: (ev: Event) => void
@@ -48,10 +44,38 @@ export function Nav({ onViewEvent, onViewClub }: Props) {
   const { user, logout } = useAuthStore()
   const [showSearch, setShowSearch] = useState(false)
   const [showNotif,  setShowNotif]  = useState(false)
-  const [notifs, setNotifs] = useState(NOTIFS)
+  const [notifs, setNotifs] = useState<Notification[]>([])
+  const [unread, setUnread] = useState(0)
 
-  const unread = notifs.filter(n => !n.read).length
-  const markAll = () => setNotifs(p => p.map(n => ({ ...n, read: true })))
+  // Poll for new notifications (skipped while the tab is in the background)
+  useEffect(() => {
+    if (!user) return
+    const load = () => {
+      if (document.hidden) return
+      notificationsApi.list()
+        .then(r => { setNotifs(r.data.items); setUnread(r.data.unread) })
+        .catch(() => {})
+    }
+    load()
+    const timer = setInterval(load, NOTIF_POLL_MS)
+    return () => clearInterval(timer)
+  }, [user?.id])
+
+  const markAll = () => {
+    setNotifs(p => p.map(n => ({ ...n, is_read: true })))
+    setUnread(0)
+    notificationsApi.markAllRead().catch(() => {})
+  }
+
+  const openNotif = (n: Notification) => {
+    if (!n.is_read) {
+      setNotifs(p => p.map(x => (x.id === n.id ? { ...x, is_read: true } : x)))
+      setUnread(u => Math.max(0, u - 1))
+      notificationsApi.markRead(n.id).catch(() => {})
+    }
+    setShowNotif(false)
+    navigate(`/events/${n.event_id}#discussion`)
+  }
 
   return (
     <>
@@ -106,23 +130,32 @@ export function Nav({ onViewEvent, onViewClub }: Props) {
                 <div style={{ position: 'absolute', top: 'calc(100% + 10px)', right: 0, width: 320, background: 'rgba(14,10,8,0.99)', border: '1.5px solid rgba(242,234,220,0.09)', boxShadow: '0 24px 60px rgba(0,0,0,0.75)', zIndex: 200, animation: 'panelIn 0.22s cubic-bezier(0.22,1,0.36,1) both' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 16px 10px', borderBottom: '1px solid var(--dark3)' }}>
                     <div style={{ fontFamily: 'var(--head)', fontSize: 13, fontWeight: 700 }}>Notifications</div>
-                    <button onClick={markAll} style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--orange)', letterSpacing: 0.5 }}>Mark all read</button>
+                    {unread > 0 && <button onClick={markAll} style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--orange)', letterSpacing: 0.5 }}>Mark all read</button>}
                   </div>
-                  <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-                    {notifs.map(n => (
-                      <div key={n.id} onClick={() => setNotifs(p => p.map(x => x.id === n.id ? { ...x, read: true } : x))}
-                        style={{ display: 'flex', gap: 10, padding: '11px 16px', borderBottom: '1px solid var(--dark2)', cursor: 'pointer', background: n.read ? 'transparent' : 'rgba(212,86,26,0.03)' }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontFamily: 'var(--body)', fontSize: 12.5, color: n.read ? 'var(--gray)' : 'var(--cream)', lineHeight: 1.4, marginBottom: 3 }}>{n.text}</div>
-                          <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>{n.time}</div>
-                        </div>
-                        {!n.read && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', flexShrink: 0, marginTop: 5 }} />}
+                  {notifs.length === 0 ? (
+                    <div style={{ padding: '34px 16px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, opacity: 0.25, marginBottom: 8 }}>🔔</div>
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', textTransform: 'uppercase', letterSpacing: 2 }}>You're all caught up</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                        {notifs.map(n => (
+                          <div key={n.id} onClick={() => openNotif(n)}
+                            style={{ display: 'flex', gap: 10, padding: '11px 16px', borderBottom: '1px solid var(--dark2)', cursor: 'pointer', background: n.is_read ? 'transparent' : 'rgba(212,86,26,0.03)' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontFamily: 'var(--body)', fontSize: 12.5, color: n.is_read ? 'var(--gray)' : 'var(--cream)', lineHeight: 1.4, marginBottom: 3 }}>{n.message}</div>
+                              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>{getTimeAgo(n.created_at)}</div>
+                            </div>
+                            {!n.is_read && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', flexShrink: 0, marginTop: 5 }} />}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div style={{ padding: '10px 16px', borderTop: '1px solid var(--dark3)', textAlign: 'center' }}>
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', letterSpacing: 0.5 }}>That's all for now</span>
-                  </div>
+                      <div style={{ padding: '10px 16px', borderTop: '1px solid var(--dark3)', textAlign: 'center' }}>
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', letterSpacing: 0.5 }}>That's all for now</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </>
             )}

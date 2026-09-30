@@ -1,7 +1,9 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { uploadsApi } from '@/api/client'
 
-const CLOUD_NAME    = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
-const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+// Uploads are signed by the backend (which holds the Cloudinary secret), so the
+// browser needs no Cloudinary config of its own. The file still goes straight to
+// Cloudinary; the backend only hands out a short-lived signature for it.
 
 interface ImageUploadProps {
   value?: string
@@ -13,10 +15,21 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
   const [uploading, setUploading]     = useState(false)
   const [progress, setProgress]       = useState(0)
   const [uploadError, setUploadError] = useState('')
+  const [enabled, setEnabled]         = useState<boolean | null>(null)   // null = still checking
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // ── Fallback: Cloudinary not configured ─────────────────
-  if (!CLOUD_NAME || !UPLOAD_PRESET) {
+  useEffect(() => {
+    uploadsApi.status()
+      .then(r => setEnabled(r.data.enabled))
+      .catch(() => setEnabled(false))
+  }, [])
+
+  if (enabled === null) {
+    return <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', padding: '14px 0' }}>Checking uploads…</div>
+  }
+
+  // ── Fallback: uploads not configured on the server ──────
+  if (!enabled) {
     return (
       <div>
         <input
@@ -26,7 +39,7 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
           placeholder="Paste poster image URL"
         />
         <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', marginTop: 6 }}>
-          Set up Cloudinary in .env for drag-and-drop upload
+          Image upload isn't set up on the server, so paste a link instead
         </div>
       </div>
     )
@@ -34,8 +47,8 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
 
   // ── Upload via XHR so we get progress events ─────────────
   const handleFile = async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setUploadError('Please select an image file')
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setUploadError('Please select a JPG, PNG or WEBP image')
       return
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -47,11 +60,19 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
     setUploadError('')
     setProgress(0)
 
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('upload_preset', UPLOAD_PRESET)
-
     try {
+      // Fresh signature per upload (Cloudinary rejects signatures older than 1 hour)
+      const { data: sig } = await uploadsApi.signature()
+
+      // Signed fields must be sent exactly as the backend signed them
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('api_key', sig.api_key)
+      formData.append('timestamp', sig.timestamp)
+      formData.append('signature', sig.signature)
+      formData.append('folder', sig.folder)
+      formData.append('allowed_formats', sig.allowed_formats)
+
       const secureUrl = await new Promise<string>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
 
@@ -59,21 +80,22 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
           if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100))
         })
         xhr.addEventListener('load', () => {
-          if (xhr.status === 200) {
-            resolve(JSON.parse(xhr.responseText).secure_url)
-          } else {
-            reject(new Error('Upload failed'))
-          }
+          let body: any = null
+          try { body = JSON.parse(xhr.responseText) } catch { /* not JSON */ }
+          if (xhr.status === 200 && body?.secure_url) resolve(body.secure_url)
+          // Cloudinary explains rejections, e.g. "Image format gif not allowed"
+          else reject(new Error(body?.error?.message ?? 'Upload failed'))
         })
         xhr.addEventListener('error', () => reject(new Error('Network error')))
 
-        xhr.open('POST', `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`)
+        xhr.open('POST', `https://api.cloudinary.com/v1_1/${sig.cloud_name}/image/upload`)
         xhr.send(formData)
       })
 
       onChange(secureUrl)
-    } catch {
-      setUploadError('Upload failed — please try again')
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail   // from our backend (signature request)
+      setUploadError(`Upload failed: ${typeof detail === 'string' ? detail : err?.message ?? 'please try again'}`)
     } finally {
       setUploading(false)
       setProgress(0)
@@ -139,7 +161,7 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
           fontSize: 9,
           color: 'rgba(242,234,220,0.5)',
         }}>
-          ✓ Uploaded to Cloudinary
+          ✓ Poster set
         </div>
       </div>
     )
@@ -179,7 +201,7 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept="image/jpeg,image/png,image/webp"
         onChange={handleInputChange}
         style={{ display: 'none' }}
       />

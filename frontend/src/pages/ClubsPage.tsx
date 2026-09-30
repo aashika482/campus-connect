@@ -1,15 +1,18 @@
 // ClubsPage.tsx
 import { useNavigate } from 'react-router-dom'
-import { useClubs, useUserClubs } from '@/hooks/useData'
+import { usePagedClubs, useUserClubs } from '@/hooks/useData'
+import { LoadMore } from '@/components/ui/ListControls'
 import { splitTags } from '@/types'
 import type { Club } from '@/types'
 
 // onViewClub kept for Nav/GlobalSearch compatibility — ClubsPage itself navigates directly
 interface Props { onViewClub?: (cl: Club) => void }
 
+const PAGE_SIZE = 12
+
 export function ClubsPage({ onViewClub }: Props) {
   const navigate = useNavigate()
-  const { clubs, loading } = useClubs()
+  const { clubs, total, loading, loadingMore, loadMore, updateMemberCount } = usePagedClubs({}, PAGE_SIZE)
   const { joinedClubs, toggleMembership } = useUserClubs()
 
   return (
@@ -21,7 +24,7 @@ export function ClubsPage({ onViewClub }: Props) {
             Find Your People<span style={{ color: 'var(--orange)' }}>.</span>
           </h1>
           <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginTop: 8 }}>
-            {loading ? '…' : `${clubs.length} clubs across every interest`}
+            {loading ? '…' : `${total} clubs across every interest`}
           </p>
         </div>
       </div>
@@ -29,15 +32,23 @@ export function ClubsPage({ onViewClub }: Props) {
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 40px' }}>
         {loading ? (
           <div style={{ textAlign: 'center', color: 'var(--gray2)', fontFamily: 'var(--mono)', fontSize: 12, padding: '60px 0' }}>Loading…</div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-            {clubs.map((cl, i) => (
-              <ClubCard key={cl.id} club={cl} delay={i * 30}
-                isMember={joinedClubs.includes(cl.id)}
-                onView={() => navigate(`/clubs/${cl.id}`)}
-                onToggle={toggleMembership} />
-            ))}
+        ) : clubs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
+            <div style={{ fontFamily: 'var(--head)', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>No clubs yet</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)' }}>Clubs will show up here once they're added</div>
           </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+              {clubs.map((cl, i) => (
+                <ClubCard key={cl.id} club={cl} delay={(i % PAGE_SIZE) * 30}
+                  isMember={joinedClubs.includes(cl.id)}
+                  onView={() => navigate(`/clubs/${cl.id}`)}
+                  onToggle={c => toggleMembership(c, n => updateMemberCount(c.id, n))} />
+              ))}
+            </div>
+            <LoadMore shown={clubs.length} total={total} loading={loadingMore} onClick={loadMore} noun="clubs" />
+          </>
         )}
       </div>
     </div>

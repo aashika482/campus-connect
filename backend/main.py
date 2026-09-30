@@ -3,14 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.core.config import settings
-from app.db.database import create_tables
-from app.api.routes import auth, events, clubs, users, discussions
+from app.db.database import engine
+from app.api.routes import auth, events, clubs, users, discussions, notifications, uploads
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await create_tables()
+    # The schema is managed by Alembic migrations (`alembic upgrade head`), not created here
     yield
+    # Close pooled DB connections on shutdown (including each --reload restart)
+    await engine.dispose()
 
 
 app = FastAPI(
@@ -23,7 +25,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.all_cors_origins,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,6 +36,8 @@ app.include_router(users.router,  prefix="/api/users",  tags=["Users"])
 app.include_router(events.router, prefix="/api/events", tags=["Events"])
 app.include_router(clubs.router,  prefix="/api/clubs",  tags=["Clubs"])
 app.include_router(discussions.router, prefix="/api/discussions", tags=["Discussions"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(uploads.router, prefix="/api/uploads", tags=["Uploads"])
 
 @app.get("/")
 async def root():
@@ -43,8 +47,3 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.get("/debug/cors")
-async def debug_cors():
-    return {"allowed_origins": settings.all_cors_origins, "frontend_urls_env": settings.FRONTEND_URLS}

@@ -1,15 +1,22 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useEvents, useUserEvents } from '@/hooks/useData'
+import { usePagedEvents, useUserEvents } from '@/hooks/useData'
+import { LoadMore } from '@/components/ui/ListControls'
 import { splitTags, getEventColor, ALL_TAGS } from '@/types'
 import type { Event } from '@/types'
 
 interface Props { onViewEvent: (ev: Event) => void }
 
+const PAGE_SIZE = 12
+
 export function EventsPage({ onViewEvent }: Props) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [activeTag, setActiveTag] = useState<string | null>(searchParams.get('tag'))
-  const { events, loading } = useEvents(activeTag ? { tag: activeTag } : undefined)
+  // The tag filter is applied by the server, so "N events" and "Load more" count every match
+  const { events, total, loading, loadingMore, loadMore } = usePagedEvents(
+    activeTag ? { tag: activeTag } : {},
+    PAGE_SIZE,
+  )
 
   // Sync URL param → active tag on mount / back-navigation
   useEffect(() => {
@@ -34,7 +41,7 @@ export function EventsPage({ onViewEvent }: Props) {
             Discover<span style={{ color: 'var(--orange)' }}>.</span>
           </h1>
           <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginTop: 8 }}>
-            {loading ? '…' : `${events.length} events`}
+            {loading ? '…' : `${total} event${total === 1 ? '' : 's'}`}
           </p>
         </div>
       </div>
@@ -64,13 +71,17 @@ export function EventsPage({ onViewEvent }: Props) {
             <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)' }}>Try a different filter</div>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 18 }}>
-            {events.map((ev, i) => (
-              <EventCard key={ev.id} ev={ev} delay={i * 40} onView={onViewEvent}
-                isSaved={saved.includes(ev.id)} isRegistered={registered.includes(ev.id)}
-                onSave={toggleSave} />
-            ))}
-          </div>
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 18 }}>
+              {events.map((ev, i) => (
+                // Stagger restarts for each loaded page, so later cards don't wait seconds to appear
+                <EventCard key={ev.id} ev={ev} delay={(i % PAGE_SIZE) * 40} onView={onViewEvent}
+                  isSaved={saved.includes(ev.id)} isRegistered={registered.includes(ev.id)}
+                  onSave={toggleSave} />
+              ))}
+            </div>
+            <LoadMore shown={events.length} total={total} loading={loadingMore} onClick={loadMore} noun="events" />
+          </>
         )}
       </div>
     </div>

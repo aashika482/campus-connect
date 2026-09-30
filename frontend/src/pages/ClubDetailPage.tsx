@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { clubsApi, eventsApi } from '@/api/client'
-import { useUserClubs } from '@/hooks/useData'
+import { clubsApi } from '@/api/client'
+import { useUserClubs, useEventsWhere } from '@/hooks/useData'
 import { useToastStore } from '@/context/toastStore'
 import { splitTags, TAG_COLORS, getEventColor } from '@/types'
 import type { Club, Event } from '@/types'
@@ -19,11 +19,11 @@ export function ClubDetailPage() {
   const { joinedClubs, toggleMembership } = useUserClubs()
 
   const [club, setClub] = useState<Club | null>(null)
-  const [events, setEvents] = useState<Event[]>([])
   const [loading, setLoading] = useState(true)
-  const [eventsLoading, setEventsLoading] = useState(true)
 
   const clubId = Number(id)
+  // A single club's events: small enough to load in full
+  const { events, loading: eventsLoading } = useEventsWhere(id ? { club_id: clubId } : null)
   const isMember = joinedClubs.includes(clubId)
 
   useEffect(() => {
@@ -33,15 +33,6 @@ export function ClubDetailPage() {
       .then(r => setClub(r.data))
       .catch(() => { toast('Club not found', 'error'); navigate('/clubs') })
       .finally(() => setLoading(false))
-  }, [id])
-
-  useEffect(() => {
-    if (!id) return
-    setEventsLoading(true)
-    eventsApi.list({ club_id: clubId })
-      .then(r => setEvents(r.data))
-      .catch(() => {})
-      .finally(() => setEventsLoading(false))
   }, [id])
 
   if (loading || !club) {
@@ -133,7 +124,7 @@ export function ClubDetailPage() {
 
                 {/* Join/Leave button */}
                 <button
-                  onClick={() => toggleMembership(club)}
+                  onClick={() => toggleMembership(club, n => setClub(c => (c ? { ...c, member_count: n } : c)))}
                   style={{
                     padding: '9px 22px',
                     fontFamily: 'var(--head)', fontSize: 11, fontWeight: 700,

@@ -1,8 +1,8 @@
 # backend/app/schemas/event.py
 # REPLACE your existing file with this
 
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, StringConstraints
+from typing import Optional, List, Annotated
 from datetime import date, datetime
 
 
@@ -20,6 +20,11 @@ class ClubOut(BaseModel):
     linkedin: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class ClubPage(BaseModel):
+    items: List[ClubOut]
+    total: int   # matching clubs across all pages
 
 
 class ClubCreate(BaseModel):
@@ -66,6 +71,11 @@ class EventOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class EventPage(BaseModel):
+    items: List[EventOut]
+    total: int   # matching events across all pages
+
+
 class EventCreate(BaseModel):
     title: str
     description: str
@@ -108,6 +118,30 @@ class EventUpdate(BaseModel):
     contact_info: Optional[str] = None
 
 
+# ── Admin people lists (registrants / members) ───────────
+class PersonOut(BaseModel):
+    user_id: int
+    name: str
+    email: str
+    phone: Optional[str] = None
+    reg_no: Optional[str] = None
+    course: Optional[str] = None
+
+
+class RegistrantOut(PersonOut):
+    registered_at: datetime
+
+
+class EventRef(BaseModel):
+    id: int
+    title: str
+
+
+class MemberOut(PersonOut):
+    joined_at: datetime
+    registered_events: List[EventRef]   # this club's events the member registered for
+
+
 class RegistrationStatus(BaseModel):
     event_id: int
     is_registered: bool
@@ -127,15 +161,62 @@ class DiscussionOut(BaseModel):
     user_role: str
     content: str
     parent_id: Optional[int] = None
+    is_official: bool = False
     created_at: datetime
+    edited_at: Optional[datetime] = None
     replies: List["DiscussionOut"] = []
 
     model_config = {"from_attributes": True}
 
 
+class DiscussionPage(BaseModel):
+    items: List[DiscussionOut]
+    total: int   # total top-level comments (not just this page)
+
+
+# Trims whitespace, rejects empty comments and anything over 2000 chars
+CommentText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
 class DiscussionCreate(BaseModel):
-    content: str
+    content: CommentText
 
 
 class DiscussionReply(BaseModel):
-    content: str
+    content: CommentText
+
+
+class DiscussionUpdate(BaseModel):
+    content: CommentText
+
+
+# ── Uploads (signed Cloudinary) ──────────────────────────
+class UploadStatus(BaseModel):
+    enabled: bool
+
+
+class UploadSignature(BaseModel):
+    cloud_name: str
+    api_key: str        # public identifier; the secret never leaves the server
+    signature: str
+    timestamp: str
+    folder: str
+    allowed_formats: str
+
+
+# ── Notification ─────────────────────────────────────────
+class NotificationOut(BaseModel):
+    id: int
+    kind: str
+    message: str
+    event_id: int
+    discussion_id: Optional[int] = None
+    is_read: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationList(BaseModel):
+    items: List[NotificationOut]
+    unread: int

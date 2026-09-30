@@ -14,7 +14,7 @@ class Club(Base):
     description: Mapped[str]  = mapped_column(Text)
     color:       Mapped[str]  = mapped_column(String(10), default="#D4561A")
     tags:        Mapped[str]  = mapped_column(String(300))   # comma-separated
-    member_count:Mapped[int]  = mapped_column(Integer, default=0)
+    member_count:Mapped[int]  = mapped_column(Integer, default=0)   # cached COUNT(memberships), recounted on join/leave
     is_open:     Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Social links

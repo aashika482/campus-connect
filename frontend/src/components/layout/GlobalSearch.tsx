@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useEvents, useClubs } from '@/hooks/useData'
+import { usePagedEvents, usePagedClubs, useDebounced } from '@/hooks/useData'
 import type { Event, Club } from '@/types'
 import { splitTags } from '@/types'
 
@@ -14,8 +14,13 @@ interface Props {
 export function GlobalSearch({ onClose, onViewEvent, onViewClub }: Props) {
   const [q, setQ] = useState('')
   const ref = useRef<HTMLInputElement>(null)
-  const { events } = useEvents()
-  const { clubs }  = useClubs()
+  // Searched on the server (lists are paginated); null = don't query until 2+ characters
+  const term = useDebounced(q.trim(), 250)
+  const active = term.length >= 2
+  const { events: evResults, loading: evLoading } = usePagedEvents(active ? { q: term } : null, 5)
+  const { clubs: clResults, loading: clLoading }  = usePagedClubs(active ? { q: term } : null, 4)
+  // Still typing (debounce pending) or waiting on the server
+  const searching = q.trim() !== term || evLoading || clLoading
 
   useEffect(() => { ref.current?.focus() }, [])
   useEffect(() => {
@@ -23,21 +28,6 @@ export function GlobalSearch({ onClose, onViewEvent, onViewClub }: Props) {
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
-
-  const ql = q.toLowerCase().trim()
-  const evResults = ql.length < 2 ? [] : events.filter(e =>
-    e.title.toLowerCase().includes(ql) ||
-    e.club_name.toLowerCase().includes(ql) ||
-    splitTags(e.tags).some(t => t.includes(ql)) ||
-    e.description.toLowerCase().includes(ql)
-  ).slice(0, 5)
-
-  const clResults = ql.length < 2 ? [] : clubs.filter(c =>
-    c.name.toLowerCase().includes(ql) ||
-    c.abbr.toLowerCase().includes(ql) ||
-    splitTags(c.tags).some(t => t.includes(ql)) ||
-    c.description.toLowerCase().includes(ql)
-  ).slice(0, 4)
 
   const hasResults = evResults.length > 0 || clResults.length > 0
 
@@ -55,11 +45,11 @@ export function GlobalSearch({ onClose, onViewEvent, onViewClub }: Props) {
         </div>
 
         {/* Results */}
-        {ql.length >= 2 && (
+        {q.trim().length >= 2 && (
           <div style={{ background: 'rgba(15,11,8,0.99)', border: '1.5px solid rgba(242,234,220,0.07)', borderTop: 'none', maxHeight: 420, overflowY: 'auto' }}>
             {!hasResults && (
               <div style={{ padding: '28px 20px', textAlign: 'center', color: 'var(--gray2)', fontFamily: 'var(--mono)', fontSize: 12 }}>
-                No results for "<span style={{ color: 'var(--cream)' }}>{q}</span>"
+                {searching ? 'Searching…' : <>No results for "<span style={{ color: 'var(--cream)' }}>{q}</span>"</>}
               </div>
             )}
             {evResults.length > 0 && (
@@ -106,7 +96,7 @@ export function GlobalSearch({ onClose, onViewEvent, onViewClub }: Props) {
         )}
 
         {/* Hint chips */}
-        {ql.length < 2 && (
+        {q.trim().length < 2 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12, padding: '0 4px' }}>
             {HINTS.map(h => (
               <button key={h} onClick={() => setQ(h)}

@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.db.database import get_db
 from app.models.user import User, UserRole
+from app.models.club import Club
 from app.core.security import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
@@ -63,13 +64,18 @@ async def register_student(payload: RegisterStudentRequest, db: AsyncSession = D
 async def register_member(payload: RegisterMemberRequest, db: AsyncSession = Depends(get_db)):
     if await _get_user_by_email(db, payload.email):
         raise HTTPException(status_code=400, detail="Email already registered")
+    # club_name must exactly match a real club: admin ownership checks compare names as strings
+    club = (await db.execute(select(Club).where(Club.name == payload.club_name))).scalar_one_or_none()
+    if not club:
+        raise HTTPException(status_code=400, detail="Please select a valid club")
     user = User(
         name=payload.name,
         email=payload.email,
         password=hash_password(payload.password),
         role=UserRole.member,
-        club_name=payload.club_name,
+        club_name=club.name,
         position=payload.position,
+        phone=payload.phone,
     )
     db.add(user)
     await db.commit()

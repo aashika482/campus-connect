@@ -1,15 +1,24 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { eventsApi, discussionsApi } from '@/api/client'
 import { useUserEvents } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
-import { splitTags, getEventColor, TAG_COLORS } from '@/types'
-import type { Event, Discussion } from '@/types'
+import { splitTags, getEventColor, getTimeAgo, TAG_COLORS } from '@/types'
+import type { Event, Discussion, User } from '@/types'
+
+const PAGE_SIZE = 10
+// Must match EDIT_WINDOW_MINUTES in backend/app/api/routes/discussions.py (the backend enforces it)
+const EDIT_WINDOW_MINUTES = 15
+
+// Backend errors come back as { detail: "..." }; validation errors (422) have a list instead
+const errMsg = (err: any, fallback: string) =>
+  typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : fallback
 
 export function EventDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuthStore()
   const { toast } = useToastStore()
   const { registered, saved, toggleSave, register } = useUserEvents()
@@ -20,9 +29,14 @@ export function EventDetailPage() {
   const [showConfirm, setShowConfirm] = useState(false)
 
   const [discussions, setDiscussions] = useState<Discussion[]>([])
+  const [discTotal, setDiscTotal] = useState(0)          // total top-level comments on the server
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [newComment, setNewComment] = useState('')
-  const [replyingTo, setReplyingTo] = useState<number | null>(null)
+  const [replyingTo, setReplyingTo] = useState<number | null>(null)  // id of the top-level comment
   const [replyText, setReplyText] = useState('')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editText, setEditText] = useState('')
   const [loadingDiscussions, setLoadingDiscussions] = useState(false)
 
   const eventId = Number(id)
@@ -45,16 +59,51 @@ export function EventDetailPage() {
       .catch(() => {})
   }, [id, registered])
 
+  // location.key changes on every navigation, so clicking a notification for the
+  // event you're already on still reloads the thread
   useEffect(() => {
     if (!id) return
     loadDiscussions()
-  }, [id])
+  }, [id, location.key])
 
+  // Notifications link to /events/:id#discussion — scroll there once the page has rendered
+  useEffect(() => {
+    if (!loading && location.hash === '#discussion') {
+      document.getElementById('discussion')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [loading, location.key])
+
+  // First page. Later pages are appended by loadMoreDiscussions; post/reply/edit/delete
+  // update the list in place so already-loaded pages aren't thrown away.
   const loadDiscussions = async () => {
     setLoadingDiscussions(true)
-    try { const r = await discussionsApi.list(eventId); setDiscussions(r.data) } catch {}
+    try {
+      const r = await discussionsApi.list(eventId, { limit: PAGE_SIZE })
+      setDiscussions(r.data.items)
+      setDiscTotal(r.data.total)
+      setHasMore(r.data.items.length === PAGE_SIZE && r.data.items.length < r.data.total)
+    } catch {}
     setLoadingDiscussions(false)
   }
+
+  const loadMoreDiscussions = async () => {
+    const last = discussions[discussions.length - 1]
+    if (!last) return
+    setLoadingMore(true)
+    try {
+      const r = await discussionsApi.list(eventId, { before_id: last.id, limit: PAGE_SIZE })
+      setDiscussions(prev => [...prev, ...r.data.items])
+      setDiscTotal(r.data.total)
+      setHasMore(r.data.items.length === PAGE_SIZE)
+    } catch { toast('Failed to load more comments', 'error') }
+    setLoadingMore(false)
+  }
+
+  // Apply a change to one comment or reply, wherever it sits in the thread
+  const patchItem = (id: number, fn: (d: Discussion) => Discussion) =>
+    setDiscussions(prev => prev.map(c =>
+      c.id === id ? fn(c) : { ...c, replies: c.replies.map(r => (r.id === id ? fn(r) : r)) }
+    ))
 
   const handleRegister = async () => {
     if (!event) return
@@ -72,22 +121,51 @@ export function EventDetailPage() {
   const handlePostComment = async () => {
     if (!newComment.trim()) return
     try {
-      await discussionsApi.create(eventId, { content: newComment.trim() })
-      setNewComment(''); loadDiscussions(); toast('Comment posted!', 'success')
-    } catch { toast('Failed to post comment', 'error') }
+      const r = await discussionsApi.create(eventId, { content: newComment.trim() })
+      setDiscussions(prev => [r.data, ...prev])
+      setDiscTotal(t => t + 1)
+      setNewComment(''); toast('Comment posted!', 'success')
+    } catch (err) { toast(errMsg(err, 'Failed to post comment'), 'error') }
+  }
+
+  // Open the reply box under a top-level comment. Replying to a reply opens the same
+  // box (threads stay one level deep) with "@Name " pre-filled.
+  const handleOpenReply = (commentId: number, mention?: string) => {
+    setReplyingTo(commentId)
+    setReplyText(mention ? `@${mention} ` : '')
   }
 
   const handleReply = async (commentId: number) => {
     if (!replyText.trim()) return
     try {
-      await discussionsApi.reply(eventId, commentId, { content: replyText.trim() })
-      setReplyText(''); setReplyingTo(null); loadDiscussions(); toast('Reply posted!', 'success')
-    } catch { toast('Failed to post reply', 'error') }
+      const r = await discussionsApi.reply(eventId, commentId, { content: replyText.trim() })
+      patchItem(commentId, c => ({ ...c, replies: [...c.replies, r.data] }))
+      setReplyText(''); setReplyingTo(null); toast('Reply posted!', 'success')
+    } catch (err) { toast(errMsg(err, 'Failed to post reply'), 'error') }
   }
 
-  const handleDeleteComment = async (commentId: number) => {
-    try { await discussionsApi.delete(eventId, commentId); loadDiscussions(); toast('Comment deleted', 'info') }
-    catch { toast('Failed to delete comment', 'error') }
+  const handleStartEdit = (item: Discussion) => { setEditingId(item.id); setEditText(item.content) }
+
+  const handleSaveEdit = async (item: Discussion) => {
+    if (!editText.trim()) return
+    try {
+      const r = await discussionsApi.edit(eventId, item.id, { content: editText.trim() })
+      patchItem(item.id, d => ({ ...d, content: r.data.content, edited_at: r.data.edited_at }))
+      setEditingId(null); setEditText(''); toast('Comment updated', 'success')
+    } catch (err) { toast(errMsg(err, 'Failed to edit comment'), 'error') }
+  }
+
+  const handleDeleteComment = async (item: Discussion) => {
+    try {
+      await discussionsApi.delete(eventId, item.id)
+      if (item.parent_id === null) {
+        setDiscussions(prev => prev.filter(c => c.id !== item.id))  // its replies go with it
+        setDiscTotal(t => t - 1)
+      } else {
+        patchItem(item.parent_id, c => ({ ...c, replies: c.replies.filter(r => r.id !== item.id) }))
+      }
+      toast('Comment deleted', 'info')
+    } catch (err) { toast(errMsg(err, 'Failed to delete comment'), 'error') }
   }
 
   if (loading) return <PageLoader />
@@ -95,7 +173,11 @@ export function EventDetailPage() {
 
   const color = getEventColor(event)
   const tags = splitTags(event.tags)
-  const deadlinePassed = event.reg_deadline && new Date(event.reg_deadline) < new Date()
+  // Open through the whole deadline day, same rule as the backend. Compare "YYYY-MM-DD"
+  // strings: new Date("2026-10-01") is UTC midnight, which would close it at 5:30 AM IST.
+  const now = new Date()
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const deadlinePassed = !!event.reg_deadline && event.reg_deadline < todayKey
   const hasDetails = event.prize_pool || event.team_size || event.contact_info ||
     (event.registration_fee && event.registration_fee !== 'Free')
 
@@ -390,7 +472,7 @@ export function EventDetailPage() {
               <div style={{ display: 'flex', gap: 28 }}>
                 {[
                   { n: regCount,          label: 'going' },
-                  { n: discussions.length, label: 'comments' },
+                  { n: discTotal,         label: 'comments' },
                 ].map(s => (
                   <div key={s.label} style={{ textAlign: 'center' }}>
                     <div style={{ fontFamily: 'var(--syne)', fontSize: 24, fontWeight: 800, color: '#10B981', lineHeight: 1 }}>
@@ -478,8 +560,8 @@ export function EventDetailPage() {
         )}
 
         {/* ── Discussion ── */}
-        <div className="au" style={{ animationDelay: '240ms' }}>
-          <SectionLabel color={color}>Discussion ({discussions.length})</SectionLabel>
+        <div id="discussion" className="au" style={{ animationDelay: '240ms', scrollMarginTop: 80 }}>
+          <SectionLabel color={color}>Discussion ({discTotal})</SectionLabel>
 
           {/* Comment input card */}
           <div style={{
@@ -550,16 +632,34 @@ export function EventDetailPage() {
                   <CommentCard
                     key={c.id}
                     comment={c}
-                    currentUser={user}
-                    color={color}
-                    replyingTo={replyingTo}
-                    replyText={replyText}
-                    onSetReplyingTo={setReplyingTo}
-                    onSetReplyText={setReplyText}
-                    onReply={handleReply}
-                    onDelete={handleDeleteComment}
+                    ctx={{
+                      currentUser: user,
+                      eventClubName: event.club_name,
+                      color,
+                      replyingTo, replyText,
+                      onOpenReply: handleOpenReply,
+                      onCloseReply: () => { setReplyingTo(null); setReplyText('') },
+                      onSetReplyText: setReplyText,
+                      onReply: handleReply,
+                      editingId, editText,
+                      onStartEdit: handleStartEdit,
+                      onCancelEdit: () => { setEditingId(null); setEditText('') },
+                      onSetEditText: setEditText,
+                      onSaveEdit: handleSaveEdit,
+                      onDelete: handleDeleteComment,
+                    }}
                   />
                 ))}
+                {hasMore && (
+                  <button
+                    onClick={loadMoreDiscussions}
+                    className="btn-g"
+                    disabled={loadingMore}
+                    style={{ alignSelf: 'center', marginTop: 8, padding: '9px 26px', fontSize: 10, letterSpacing: 2 }}
+                  >
+                    {loadingMore ? 'Loading…' : 'Load more comments'}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -699,27 +799,33 @@ function DetailPanel({ icon, label, value, color }: {
   )
 }
 
-// ── Comment card ──────────────────────────────────────────
-function CommentCard({
-  comment, currentUser, color,
-  replyingTo, replyText,
-  onSetReplyingTo, onSetReplyText,
-  onReply, onDelete,
-}: {
-  comment: Discussion
-  currentUser: any
+// ── Comment thread ────────────────────────────────────────
+// Everything a comment card needs from the page, bundled so it isn't 15 separate props
+interface ThreadCtx {
+  currentUser: User | null
+  eventClubName: string
   color: string
   replyingTo: number | null
   replyText: string
-  onSetReplyingTo: (id: number | null) => void
+  onOpenReply: (commentId: number, mention?: string) => void
+  onCloseReply: () => void
   onSetReplyText: (text: string) => void
-  onReply: (id: number) => void
-  onDelete: (id: number) => void
-}) {
-  const isAdmin = currentUser?.role === 'member'
-  const isOwn = currentUser?.id === comment.user_id
-  const isReplying = replyingTo === comment.id
-  const commenterIsAdmin = comment.user_role === 'member'
+  onReply: (commentId: number) => void
+  editingId: number | null
+  editText: string
+  onStartEdit: (item: Discussion) => void
+  onCancelEdit: () => void
+  onSetEditText: (text: string) => void
+  onSaveEdit: (item: Discussion) => void
+  onDelete: (item: Discussion) => void
+}
+
+const withinEditWindow = (createdAt: string) =>
+  Date.now() - new Date(createdAt).getTime() < EDIT_WINDOW_MINUTES * 60_000
+
+// ── Comment card (top-level comment + its replies) ────────
+function CommentCard({ comment, ctx }: { comment: Discussion; ctx: ThreadCtx }) {
+  const isReplying = ctx.replyingTo === comment.id
 
   return (
     <div style={{
@@ -729,18 +835,7 @@ function CommentCard({
     }}>
       {/* Comment header row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-
-        {/* Avatar */}
-        <div style={{
-          width: 34, height: 34, borderRadius: 8, flexShrink: 0,
-          background: commenterIsAdmin ? 'rgba(212,86,26,0.14)' : 'var(--dark3)',
-          border: commenterIsAdmin ? '1.5px solid rgba(212,86,26,0.3)' : '1px solid var(--dark4)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'var(--head)', fontSize: 13, fontWeight: 700,
-          color: commenterIsAdmin ? 'var(--orange)' : 'var(--gray)',
-        }}>
-          {comment.user_name[0].toUpperCase()}
-        </div>
+        <Avatar name={comment.user_name} official={comment.is_official} size={34} />
 
         {/* Name + time */}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -748,134 +843,218 @@ function CommentCard({
             <span style={{ fontFamily: 'var(--head)', fontSize: 13, fontWeight: 600 }}>
               {comment.user_name}
             </span>
-            {commenterIsAdmin && (
-              <span style={{
-                padding: '1px 7px', fontSize: 8, fontFamily: 'var(--mono)', fontWeight: 600,
-                background: 'rgba(212,86,26,0.1)', color: 'var(--orange)',
-                border: '1px solid rgba(212,86,26,0.25)', borderRadius: 4,
-                textTransform: 'uppercase', letterSpacing: 1.2,
-              }}>
-                Admin
-              </span>
-            )}
+            {comment.is_official && <AdminBadge />}
           </div>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', marginTop: 2 }}>
-            {getTimeAgo(comment.created_at)}
+            {getTimeAgo(comment.created_at)}{comment.edited_at && ' (edited)'}
           </div>
         </div>
 
-        {/* Action buttons: Reply (admin only) + Delete (admin or own) */}
-        {(isAdmin || isOwn) && (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-            {isAdmin && (
-              <button
-                onClick={() => { onSetReplyingTo(isReplying ? null : comment.id); onSetReplyText('') }}
-                style={{
-                  fontSize: 10, fontFamily: 'var(--mono)', fontWeight: 500,
-                  color: 'var(--orange)', padding: '4px 9px',
-                  border: '1px solid rgba(212,86,26,0.28)', borderRadius: 5,
-                  transition: 'all 0.15s',
-                }}
-              >
-                {isReplying ? 'Cancel' : 'Reply'}
-              </button>
-            )}
-            <button
-              onClick={() => onDelete(comment.id)}
-              style={{
-                fontSize: 10, fontFamily: 'var(--mono)', fontWeight: 500,
-                color: '#EF4444', padding: '4px 9px',
-                border: '1px solid rgba(239,68,68,0.28)', borderRadius: 5,
-                transition: 'all 0.15s',
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        )}
+        <ItemActions
+          item={comment}
+          ctx={ctx}
+          replyLabel={isReplying ? 'Cancel' : 'Reply'}
+          onReplyClick={() => (isReplying ? ctx.onCloseReply() : ctx.onOpenReply(comment.id))}
+        />
       </div>
 
-      {/* Comment content */}
-      <div style={{
-        fontFamily: 'var(--body)', fontSize: 13.5, color: 'var(--cream3)',
-        lineHeight: 1.65, marginLeft: 46,
-      }}>
-        {comment.content}
+      {/* Comment content (or edit box) */}
+      <div style={{ marginLeft: 46 }}>
+        <ItemBody item={comment} ctx={ctx} fontSize={13.5} />
       </div>
 
-      {/* Reply input */}
+      {/* Nested replies */}
+      {comment.replies.length > 0 && (
+        <div style={{ marginLeft: 46, marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {comment.replies.map(reply => (
+            <ReplyItem key={reply.id} reply={reply} parentId={comment.id} ctx={ctx} />
+          ))}
+        </div>
+      )}
+
+      {/* Reply input — sits under the thread so it reads like the next message */}
       {isReplying && (
         <div style={{ marginLeft: 46, marginTop: 14 }}>
           <textarea
             className="inp"
-            value={replyText}
-            onChange={e => onSetReplyText(e.target.value)}
+            value={ctx.replyText}
+            onChange={e => ctx.onSetReplyText(e.target.value)}
             placeholder="Write a reply…"
             rows={2}
+            autoFocus
             style={{ resize: 'vertical', fontSize: 13, minHeight: 58 }}
           />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+            <button onClick={ctx.onCloseReply} className="btn-g" style={{ padding: '7px 16px', fontSize: 10, letterSpacing: 2 }}>
+              Cancel
+            </button>
             <button
-              onClick={() => onReply(comment.id)}
+              onClick={() => ctx.onReply(comment.id)}
               className="btn-p"
               style={{ padding: '7px 18px', fontSize: 10, letterSpacing: 2 }}
-              disabled={!replyText.trim()}
+              disabled={!ctx.replyText.trim()}
             >
               Reply
             </button>
           </div>
         </div>
       )}
+    </div>
+  )
+}
 
-      {/* Nested replies */}
-      {comment.replies && comment.replies.length > 0 && (
-        <div style={{ marginLeft: 46, marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {comment.replies.map(reply => (
-            <div
-              key={reply.id}
-              style={{
-                padding: '13px 16px', borderRadius: 10,
-                background: `${color}06`,
-                borderLeft: `2px solid ${color}55`,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
-                <div style={{
-                  width: 26, height: 26, borderRadius: 6,
-                  background: 'rgba(212,86,26,0.12)',
-                  border: '1px solid rgba(212,86,26,0.25)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'var(--head)', fontSize: 11, fontWeight: 700, color: 'var(--orange)',
-                  flexShrink: 0,
-                }}>
-                  {reply.user_name[0].toUpperCase()}
-                </div>
-                <span style={{ fontFamily: 'var(--head)', fontSize: 12, fontWeight: 600, color: 'var(--orange)' }}>
-                  {reply.user_name}
-                </span>
-                <span style={{
-                  padding: '1px 6px', fontSize: 7, fontFamily: 'var(--mono)', fontWeight: 600,
-                  background: 'rgba(212,86,26,0.08)', color: 'var(--orange)',
-                  border: '1px solid rgba(212,86,26,0.2)', borderRadius: 4,
-                  textTransform: 'uppercase', letterSpacing: 1.2,
-                }}>
-                  Admin
-                </span>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--gray2)' }}>
-                  {getTimeAgo(reply.created_at)}
-                </span>
-              </div>
-              <div style={{
-                fontFamily: 'var(--body)', fontSize: 13, color: 'var(--cream3)', lineHeight: 1.6,
-                marginLeft: 34,
-              }}>
-                {reply.content}
-              </div>
-            </div>
-          ))}
+// ── Single reply inside a thread ──────────────────────────
+function ReplyItem({ reply, parentId, ctx }: { reply: Discussion; parentId: number; ctx: ThreadCtx }) {
+  const { color } = ctx
+  const official = reply.is_official
+  // Replying to a reply stays in the same thread, @mentioning its author (unless it's you)
+  const mention = reply.user_id !== ctx.currentUser?.id ? reply.user_name : undefined
+
+  return (
+    <div style={{
+      padding: '13px 16px', borderRadius: 10,
+      background: official ? `${color}06` : 'rgba(242,234,220,0.02)',
+      borderLeft: `2px solid ${official ? `${color}55` : 'var(--dark4)'}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+        <Avatar name={reply.user_name} official={official} size={26} />
+        <span style={{
+          fontFamily: 'var(--head)', fontSize: 12, fontWeight: 600,
+          color: official ? 'var(--orange)' : 'var(--cream)',
+        }}>
+          {reply.user_name}
+        </span>
+        {official && <AdminBadge small />}
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--gray2)' }}>
+          {getTimeAgo(reply.created_at)}{reply.edited_at && ' (edited)'}
+        </span>
+        <div style={{ marginLeft: 'auto' }}>
+          <ItemActions
+            item={reply}
+            ctx={ctx}
+            replyLabel="Reply"
+            onReplyClick={() => ctx.onOpenReply(parentId, mention)}
+          />
         </div>
+      </div>
+      <div style={{ marginLeft: 34 }}>
+        <ItemBody item={reply} ctx={ctx} fontSize={13} />
+      </div>
+    </div>
+  )
+}
+
+// ── Reply / Edit / Delete buttons for a comment or reply ──
+function ItemActions({ item, ctx, replyLabel, onReplyClick }: {
+  item: Discussion
+  ctx: ThreadCtx
+  replyLabel: string
+  onReplyClick: () => void
+}) {
+  const me = ctx.currentUser
+  const isOwn = me?.id === item.user_id
+  // Admins moderate only their own club's events (matches the backend check)
+  const canModerate = me?.role === 'member' && me.club_name === ctx.eventClubName
+  const canEdit = isOwn && withinEditWindow(item.created_at) && ctx.editingId !== item.id
+  const canDelete = isOwn || canModerate
+
+  return (
+    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+      <ActionBtn color="var(--orange)" border="rgba(212,86,26,0.28)" onClick={onReplyClick}>{replyLabel}</ActionBtn>
+      {canEdit && (
+        <ActionBtn color="var(--gray)" border="var(--dark4)" onClick={() => ctx.onStartEdit(item)}>Edit</ActionBtn>
+      )}
+      {canDelete && (
+        <ActionBtn color="#EF4444" border="rgba(239,68,68,0.28)" onClick={() => ctx.onDelete(item)}>Delete</ActionBtn>
       )}
     </div>
+  )
+}
+
+// ── Comment text, or an inline edit box while editing ─────
+function ItemBody({ item, ctx, fontSize }: { item: Discussion; ctx: ThreadCtx; fontSize: number }) {
+  if (ctx.editingId !== item.id) {
+    return (
+      <div style={{
+        fontFamily: 'var(--body)', fontSize, color: 'var(--cream3)',
+        lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+      }}>
+        {item.content}
+      </div>
+    )
+  }
+  return (
+    <div>
+      <textarea
+        className="inp"
+        value={ctx.editText}
+        onChange={e => ctx.onSetEditText(e.target.value)}
+        rows={2}
+        autoFocus
+        style={{ resize: 'vertical', fontSize: 13, minHeight: 58 }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+        <button onClick={ctx.onCancelEdit} className="btn-g" style={{ padding: '7px 16px', fontSize: 10, letterSpacing: 2 }}>
+          Cancel
+        </button>
+        <button
+          onClick={() => ctx.onSaveEdit(item)}
+          className="btn-p"
+          style={{ padding: '7px 18px', fontSize: 10, letterSpacing: 2 }}
+          disabled={!ctx.editText.trim()}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Small building blocks ─────────────────────────────────
+function Avatar({ name, official, size }: { name: string; official: boolean; size: number }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: size > 30 ? 8 : 6, flexShrink: 0,
+      background: official ? 'rgba(212,86,26,0.14)' : 'var(--dark3)',
+      border: official ? '1.5px solid rgba(212,86,26,0.3)' : '1px solid var(--dark4)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: 'var(--head)', fontSize: size > 30 ? 13 : 11, fontWeight: 700,
+      color: official ? 'var(--orange)' : 'var(--gray)',
+    }}>
+      {name[0].toUpperCase()}
+    </div>
+  )
+}
+
+function AdminBadge({ small }: { small?: boolean }) {
+  return (
+    <span style={{
+      padding: small ? '1px 6px' : '1px 7px', fontSize: small ? 7 : 8,
+      fontFamily: 'var(--mono)', fontWeight: 600,
+      background: 'rgba(212,86,26,0.1)', color: 'var(--orange)',
+      border: '1px solid rgba(212,86,26,0.25)', borderRadius: 4,
+      textTransform: 'uppercase', letterSpacing: 1.2,
+    }}>
+      Admin
+    </span>
+  )
+}
+
+function ActionBtn({ children, color, border, onClick }: {
+  children: React.ReactNode; color: string; border: string; onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        fontSize: 10, fontFamily: 'var(--mono)', fontWeight: 500,
+        color, padding: '4px 9px',
+        border: `1px solid ${border}`, borderRadius: 5,
+        transition: 'all 0.15s',
+      }}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -891,18 +1070,4 @@ function PageLoader() {
       </div>
     </div>
   )
-}
-
-// ── Time helper ───────────────────────────────────────────
-function getTimeAgo(dateStr: string): string {
-  const now = new Date()
-  const then = new Date(dateStr)
-  const mins = Math.floor((now.getTime() - then.getTime()) / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return then.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
 }

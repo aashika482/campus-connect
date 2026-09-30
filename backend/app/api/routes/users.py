@@ -25,5 +25,6 @@ async def update_me(
         data["interests"] = ",".join(data["interests"])
     for k, v in data.items():
         setattr(user, k, v)
-    await db.flush()
+    await db.commit()
+    await db.refresh(user)
     return user

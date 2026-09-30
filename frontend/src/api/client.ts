@@ -79,7 +79,7 @@ export const authApi = {
 
 // ── Events ───────────────────────────────────────────────
 export const eventsApi = {
-  list:               (params?: object)          => api.get('/events', { params }),
+  list:               (params?: object)          => api.get('/events', { params }),   // paginated: { items, total }
   get:                (id: number)               => api.get(`/events/${id}`),
   create:             (data: object)             => api.post('/events', data),
   update:             (id: number, data: object) => api.patch(`/events/${id}`, data),
@@ -88,6 +88,7 @@ export const eventsApi = {
   unregister:         (id: number)               => api.delete(`/events/${id}/register`),
   myRegistered:       ()                         => api.get('/events/me/registered'),
   registrationCount:  (id: number)               => api.get(`/events/${id}/registrations/count`),
+  registrations:      (id: number)               => api.get(`/events/${id}/registrations`),   // admin, own club
   save:               (id: number)               => api.post(`/events/${id}/save`),
   unsave:             (id: number)               => api.delete(`/events/${id}/save`),
   mySaved:            ()                         => api.get('/events/me/saved'),
@@ -95,11 +96,12 @@ export const eventsApi = {
 
 // ── Clubs ────────────────────────────────────────────────
 export const clubsApi = {
-  list:     ()           => api.get('/clubs'),
+  list:     (params?: object) => api.get('/clubs', { params }),   // paginated: { items, total }
   get:      (id: number) => api.get(`/clubs/${id}`),
   join:     (id: number) => api.post(`/clubs/${id}/join`),
   leave:    (id: number) => api.delete(`/clubs/${id}/join`),
   myClubs:  ()           => api.get('/clubs/me/joined'),
+  adminMembers: ()       => api.get('/clubs/admin/members'),   // admin, own club
 }
 
 // ── Users ────────────────────────────────────────────────
@@ -109,11 +111,29 @@ export const usersApi = {
 }
 
 // ── Discussions ──────────────────────────────────────────
+// list/adminFeed are paginated: pass before_id = id of the last comment you have to get the next page
+type PageParams = { before_id?: number; limit?: number }
+
 export const discussionsApi = {
-  list:       (eventId: number)                          => api.get(`/discussions/${eventId}`),
+  list:       (eventId: number, params?: PageParams)     => api.get(`/discussions/${eventId}`, { params }),
   create:     (eventId: number, data: { content: string }) => api.post(`/discussions/${eventId}`, data),
   reply:      (eventId: number, commentId: number, data: { content: string }) =>
                 api.post(`/discussions/${eventId}/${commentId}/reply`, data),
+  edit:       (eventId: number, commentId: number, data: { content: string }) =>
+                api.patch(`/discussions/${eventId}/${commentId}`, data),
   delete:     (eventId: number, commentId: number)       => api.delete(`/discussions/${eventId}/${commentId}`),
-  adminFeed:  ()                                         => api.get('/discussions/admin/feed'),
+  adminFeed:  (params?: PageParams)                      => api.get('/discussions/admin/feed', { params }),
+}
+
+// ── Uploads (signed Cloudinary; admin only) ──────────────
+export const uploadsApi = {
+  status:    () => api.get('/uploads/status'),       // { enabled }
+  signature: () => api.post('/uploads/signature'),   // params to send to Cloudinary with the file
+}
+
+// ── Notifications ────────────────────────────────────────
+export const notificationsApi = {
+  list:        ()           => api.get('/notifications'),
+  markRead:    (id: number) => api.post(`/notifications/${id}/read`),
+  markAllRead: ()           => api.post('/notifications/read-all'),
 }

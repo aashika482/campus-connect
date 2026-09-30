@@ -12,6 +12,7 @@ interface AuthState {
   registerMember: (data: object) => Promise<void>
   logout: () => void
   initFromStorage: () => Promise<void>
+  setUser: (user: User) => void   // after the profile is edited
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -54,6 +55,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ isLoading: false })
     }
   },
+
+  setUser: (user) => set({ user }),
 
   logout: () => {
     localStorage.removeItem('access_token')

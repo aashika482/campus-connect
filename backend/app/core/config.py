@@ -16,23 +16,27 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # CORS — add your deployed frontend URL here in production
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ]
-    # Comma-separated list of allowed frontend URLs for production
-    # e.g. https://campulse.vercel.app,https://campulse-git-main-user.vercel.app
-    FRONTEND_URLS: str = ""
+    # CORS — comma-separated frontend origins allowed to call the API.
+    # The default is for local dev; in production set it to the deployed frontend,
+    # e.g. CORS_ORIGINS=https://campulse.vercel.app
+    # (A plain string, not List[str]: pydantic-settings would expect JSON for a list.)
+    CORS_ORIGINS: str = "http://localhost:5173"
+
+    # Cloudinary (signed poster uploads). All three come from the Cloudinary
+    # dashboard. The secret stays on the server; if any is missing, uploads are
+    # disabled and the poster field falls back to pasting an image URL.
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
 
     @property
-    def all_cors_origins(self) -> List[str]:
-        origins = list(self.CORS_ORIGINS)
-        for url in self.FRONTEND_URLS.split(","):
-            url = url.strip().rstrip("/")
-            if url:
-                origins.append(url)
-        return origins
+    def cors_origins(self) -> List[str]:
+        # Browsers send the origin without a trailing slash, so strip it to match
+        return [o.strip().rstrip("/") for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def cloudinary_enabled(self) -> bool:
+        return bool(self.CLOUDINARY_CLOUD_NAME and self.CLOUDINARY_API_KEY and self.CLOUDINARY_API_SECRET)
 
     class Config:
         env_file = ".env"

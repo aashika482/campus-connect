@@ -38,7 +38,7 @@ CamPulse helps students at MUJ discover clubs and events happening on campus. Th
 - **Event detail pages** — poster, description, venue, dates, registration fee, prize pool
 - **Club pages** — club info, member count, join/leave, social links
 - **Registration & saving** — register for events, save them for later
-- **Discussions** — comment on events, club admins can reply
+- **Discussions** — comment on events and reply to each other, with official club replies badged; 15-minute edit window and in-app reply notifications
 - **Admin dashboard** — post events, view registrations, manage discussion feed
 - **Auth** — separate registration flows for students and club committee members
 
@@ -91,6 +91,7 @@ DEBUG=False
 ```
 
 ```bash
+alembic upgrade head        # create / update the database tables
 uvicorn main:app --reload
 # API running at http://localhost:8000
 ```
@@ -106,8 +107,6 @@ Create `frontend/.env` (copy from `.env.example`):
 
 ```
 VITE_API_URL=http://localhost:8000
-VITE_CLOUDINARY_CLOUD_NAME=your_cloud_name
-VITE_CLOUDINARY_UPLOAD_PRESET=your_preset
 ```
 
 ```bash
@@ -126,15 +125,14 @@ npm run dev
 | `DATABASE_URL`   | Neon PostgreSQL connection string                |
 | `JWT_SECRET_KEY` | Secret key for signing JWTs                      |
 | `DEBUG`          | `False` in production                            |
-| `FRONTEND_URLS`  | Comma-separated list of allowed frontend origins |
+| `CORS_ORIGINS`   | Comma-separated allowed frontend origins (default `http://localhost:5173`) |
+| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Signed poster uploads (optional) |
 
 ### Frontend (Vercel)
 
 | Variable                        | Description                  |
 | ------------------------------- | ---------------------------- |
 | `VITE_API_URL`                  | Deployed Railway backend URL |
-| `VITE_CLOUDINARY_CLOUD_NAME`    | Cloudinary cloud name        |
-| `VITE_CLOUDINARY_UPLOAD_PRESET` | Unsigned upload preset name  |
 
 ---
 
@@ -149,5 +147,6 @@ npm run dev
 | `registrations` | User ↔ Event registrations          |
 | `saved_events`  | User saved events                   |
 | `discussions`   | Comments and replies on events      |
+| `notifications` | In-app reply/comment notifications  |
 
 ---

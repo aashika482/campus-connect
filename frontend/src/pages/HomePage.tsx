@@ -1,4 +1,4 @@
-import { useEvents, useUserEvents } from '@/hooks/useData'
+import { usePagedEvents, usePagedClubs, useUserEvents } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
 import { splitTags, getEventColor } from '@/types'
 import type { Event } from '@/types'
@@ -7,21 +7,22 @@ interface Props { onViewEvent: (ev: Event) => void }
 
 export function HomePage({ onViewEvent }: Props) {
   const { user } = useAuthStore()
-  const { events, loading } = useEvents()
-  const { registered, saved, toggleSave, register } = useUserEvents()
+  const { registered, saved, toggleSave } = useUserEvents()
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+  const userTags = user?.interests ? user.interests.split(',').filter(Boolean) : []
 
-  const hot       = events.filter(e => e.is_hot)
-  const userTags  = user?.interests ? user.interests.split(',') : []
-  const forYou    = userTags.length > 0
-    ? events.filter(e => splitTags(e.tags).some(t => userTags.includes(t))).slice(0, 6)
-    : events.slice(0, 6)
-  const today     = new Date(); today.setHours(0, 0, 0, 0)
-  const upcoming  = [...events]
-    .filter(e => new Date(e.end_date ?? e.start_date) >= today)
-    .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
-    .slice(0, 4)
+  // Each section asks the server for exactly what it shows (lists are paginated)
+  const allEvents = usePagedEvents({}, 1)                                           // only its total is used
+  const allClubs  = usePagedClubs({}, 1)                                            // only its total is used
+  const hotQ      = usePagedEvents({ hot: true }, 12)
+  const forYouQ   = usePagedEvents(userTags.length > 0 ? { tags: userTags.join(',') } : {}, 6)
+  const upcomingQ = usePagedEvents({ upcoming: true }, 4)                           // soonest first
 
-  if (loading) return <PageLoader />
+  const hot      = hotQ.events
+  const forYou   = forYouQ.events
+  const upcoming = upcomingQ.events
+
+  if ([allEvents, allClubs, hotQ, forYouQ, upcomingQ].some(x => x.loading)) return <PageLoader />
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: '100vh' }}>
@@ -36,10 +37,10 @@ export function HomePage({ onViewEvent }: Props) {
             <span style={{ color: 'var(--orange)' }}>Fully alive.</span>
           </h1>
           <p style={{ fontFamily: 'var(--body)', fontSize: 15, color: 'var(--cream3)', maxWidth: 480, lineHeight: 1.6 }}>
-            16 clubs, 25+ events, one place. Find what's happening, register in seconds, and never miss a moment.
+            {plural(allClubs.total, 'club')}, {plural(allEvents.total, 'event')}, one place. Find what's happening, register in seconds, and never miss a moment.
           </p>
           <div style={{ display: 'flex', gap: 10, marginTop: 28, flexWrap: 'wrap' }}>
-            {[`${events.length} events`, '16 clubs', '3,200 students'].map((t, i) => (
+            {[plural(allEvents.total, 'event'), plural(allClubs.total, 'club')].map((t, i) => (
               <div key={i} style={{ padding: '5px 12px', background: i === 0 ? 'var(--orange)' : 'transparent', color: i === 0 ? 'var(--bg)' : 'var(--cream)', border: i === 0 ? 'none' : '1.5px solid rgba(242,234,220,0.14)', fontSize: 9, fontFamily: 'var(--mono)', letterSpacing: 1.2, textTransform: 'uppercase' }}>{t}</div>
             ))}
           </div>
@@ -50,7 +51,7 @@ export function HomePage({ onViewEvent }: Props) {
 
         {/* Hot events */}
         {hot.length > 0 && (
-          <Section title="🔥 Hot Right Now" sub={`${hot.length} events everyone's watching`}>
+          <Section title="🔥 Hot Right Now" sub={`${hotQ.total} event${hotQ.total === 1 ? '' : 's'} everyone's watching`}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 16 }}>
               {hot.map(ev => (
                 <EventCard key={ev.id} ev={ev} onView={onViewEvent} onSave={toggleSave} isSaved={saved.includes(ev.id)} isRegistered={registered.includes(ev.id)} />
