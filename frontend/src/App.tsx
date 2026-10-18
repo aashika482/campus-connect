@@ -13,6 +13,7 @@ import { ClubsPage }    from '@/pages/ClubsPage'
 import { EventDetailPage } from '@/pages/EventDetailPage'
 import { ClubDetailPage }  from '@/pages/ClubDetailPage'
 import { SavedPage, ProfilePage, CalendarPage, AdminPage } from '@/pages/OtherPages'
+import { DswPage, PlatformPage } from '@/pages/GovernancePages'
 
 import type { Event, Club } from '@/types'
 
@@ -105,6 +106,17 @@ export default function App() {
           <Route path="/admin" element={
             <ProtectedRoute>
               <AdminPage />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/dsw" element={
+            <ProtectedRoute>
+              <DswPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/platform" element={
+            <ProtectedRoute>
+              <PlatformPage />
             </ProtectedRoute>
           } />
 

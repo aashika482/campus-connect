@@ -30,7 +30,7 @@ engine = create_async_engine(
     # connection and failed with a 500 ("connection is closed"). pre_ping checks
     # each connection before handing it out and transparently replaces dead ones.
     pool_pre_ping=True,
-    connect_args={"ssl": True},
+    connect_args={"ssl": settings.DATABASE_SSL},
 )
 
 AsyncSessionLocal = async_sessionmaker(

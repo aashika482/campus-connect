@@ -9,9 +9,10 @@ from sqlalchemy import select, func
 from app.db.database import get_db
 from app.models.discussion import Discussion
 from app.models.event import Event
+from app.models.membership import ClubRole, ClubRoleStatus, TEAM_ROLES
 from app.models.notification import Notification
-from app.models.user import User, UserRole
-from app.core.deps import get_current_active_user, require_club_member
+from app.models.user import User
+from app.core.deps import get_or_404, get_current_active_user, ensure_can_manage
 from app.schemas.event import (
     DiscussionOut, DiscussionPage, DiscussionCreate, DiscussionReply, DiscussionUpdate,
 )
@@ -24,14 +25,6 @@ EDIT_WINDOW_MINUTES = 15
 
 
 # ── Helpers ──────────────────────────────────────────────
-async def _get_event_or_404(db: AsyncSession, event_id: int) -> Event:
-    result = await db.execute(select(Event).where(Event.id == event_id))
-    event = result.scalar_one_or_none()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event
-
-
 async def _attach_replies(db: AsyncSession, comments: list[Discussion]) -> None:
     """Load replies for the given top-level comments in ONE query and attach them.
 
@@ -77,10 +70,6 @@ async def _paginate_top_level(db: AsyncSession, base_filter, before_id: Optional
 
     await _attach_replies(db, comments)
     return DiscussionPage(items=[DiscussionOut.model_validate(c) for c in comments], total=total)
-
-
-def _is_club_admin_of(user: User, event: Event) -> bool:
-    return user.role == UserRole.member and user.club_name == event.club_name
 
 
 def _short(text: str, n: int = 80) -> str:
@@ -136,13 +125,15 @@ def _add_mention_notifications(
 # doesn't try to parse "admin" as an integer event_id.
 @router.get("/admin/feed", response_model=DiscussionPage)
 async def admin_discussion_feed(
+    club_id: int = Query(..., description="The club whose events' comments to list"),
     before_id: Optional[int] = Query(None),
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_club_member),
+    user: User = Depends(get_current_active_user),
 ):
-    """Paginated top-level comments (with their replies) across all of the admin's club events."""
-    return await _paginate_top_level(db, Event.club_name == user.club_name, before_id, limit)
+    """Paginated top-level comments (with their replies) across all of a club's events. Team only."""
+    ensure_can_manage(user, club_id)
+    return await _paginate_top_level(db, Event.club_id == club_id, before_id, limit)
 
 
 @router.get("/{event_id}", response_model=DiscussionPage)
@@ -164,16 +155,16 @@ async def create_discussion(
     user: User = Depends(get_current_active_user),
 ):
     """Any logged-in user can post a top-level comment.
-    Anyone @mentioned gets a "mention" notification; the event's other club admins get a "comment" one.
+    Anyone @mentioned gets a "mention" notification; the club's team (owner, editors, faculty) gets a "comment" one.
     """
-    event = await _get_event_or_404(db, event_id)
+    event = await get_or_404(db, Event, event_id)
 
     discussion = Discussion(
         event_id=event_id,
         user_id=user.id,
         user_name=user.name,
-        user_role=user.role.value,
-        is_official=_is_club_admin_of(user, event),
+        user_role=user.account_type.value,
+        is_official=user.can_manage(event.club_id),
         content=payload.content,
         parent_id=None,
     )
@@ -183,15 +174,19 @@ async def create_discussion(
     mentioned = await _mentioned_user_ids(db, event_id, payload.content) - {user.id}
     _add_mention_notifications(db, mentioned, user, event, discussion.id)
 
-    admin_ids = set((await db.execute(
-        select(User.id).where(
-            User.role == UserRole.member,
-            User.club_name == event.club_name,
+    # The club's team hears about every new comment on its events
+    team_ids = set((await db.execute(
+        select(ClubRole.user_id)
+        .join(User, User.id == ClubRole.user_id)
+        .where(
+            ClubRole.club_id == event.club_id,
+            ClubRole.role.in_(TEAM_ROLES),
+            ClubRole.status == ClubRoleStatus.active,
             User.is_active == True,
             User.id != user.id,
         )
     )).scalars().all())
-    for admin_id in admin_ids - mentioned:  # mentioned admins already got a notification
+    for admin_id in team_ids - mentioned:  # mentioned team members already got a notification
         db.add(Notification(
             user_id=admin_id,
             kind="comment",
@@ -218,7 +213,7 @@ async def reply_to_discussion(
     The comment's author gets a "reply" notification (unless replying to themselves),
     and anyone else @mentioned gets a "mention" notification.
     """
-    event = await _get_event_or_404(db, event_id)
+    event = await get_or_404(db, Event, event_id)
 
     result = await db.execute(
         select(Discussion).where(Discussion.id == comment_id, Discussion.event_id == event_id)
@@ -233,8 +228,8 @@ async def reply_to_discussion(
         event_id=event_id,
         user_id=user.id,
         user_name=user.name,
-        user_role=user.role.value,
-        is_official=_is_club_admin_of(user, event),
+        user_role=user.account_type.value,
+        is_official=user.can_manage(event.club_id),
         content=payload.content,
         parent_id=comment_id,
     )
@@ -292,7 +287,7 @@ async def edit_discussion(
     )).scalars().all())
     mentioned = await _mentioned_user_ids(db, event_id, payload.content) - {user.id} - already_notified
     if mentioned:
-        event = await _get_event_or_404(db, event_id)
+        event = await get_or_404(db, Event, event_id)
         _add_mention_notifications(db, mentioned, user, event, comment.id)
 
     await db.commit()
@@ -308,8 +303,8 @@ async def delete_discussion(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
-    """Club admins can delete any comment on their own club's events.
-    Students can only delete their own comments.
+    """Anyone can delete their own comments. Club admins can also delete any comment on
+    their own club's events, and the DSW on any event (User.can_moderate).
     Deleting a parent comment cascades to all its replies (and their notifications).
     """
     result = await db.execute(
@@ -319,17 +314,9 @@ async def delete_discussion(
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
 
-    is_own = user.id == comment.user_id
-    if user.role == UserRole.member:
-        # Admins can only moderate events belonging to their own club
-        event_result = await db.execute(select(Event).where(Event.id == event_id))
-        event = event_result.scalar_one_or_none()
-        is_own_club = event is not None and event.club_name == user.club_name
-        if not is_own_club and not is_own:
-            raise HTTPException(status_code=403, detail="You can only delete comments on your own club's events")
-    else:
-        # Students can only delete their own comments
-        if not is_own:
+    if comment.user_id != user.id:
+        event = await get_or_404(db, Event, event_id)
+        if not user.can_moderate(event.club_id):
             raise HTTPException(status_code=403, detail="Not allowed to delete this comment")
 
     await db.delete(comment)

@@ -1,21 +1,34 @@
-// frontend/src/types/index.ts
-// REPLACE your existing file with this
-
 // ── Auth / User ──────────────────────────────────────────
-export type UserRole = 'student' | 'member'
+// Account type is global (mirrors AccountType in backend/app/models/user.py).
+// student / faculty come from the email domain; alumni is set by the DSW;
+// dsw (Dean of Student Welfare office) and platform_admin (tech team) are appointed.
+export type AccountType = 'student' | 'faculty' | 'alumni' | 'dsw' | 'platform_admin'
+
+// Club roles are per club (mirrors ClubRoleKind / ClubRoleStatus in backend/app/models/membership.py)
+export type ClubRoleKind = 'member' | 'editor' | 'owner' | 'faculty_coordinator'
+export type ClubRoleStatus = 'pending' | 'active' | 'rejected' | 'ended'
+
+export interface ClubRole {
+  id: number
+  club_id: number
+  club_name: string
+  role: ClubRoleKind
+  status: ClubRoleStatus
+  title: string | null
+  created_at: string
+}
 
 export interface User {
   id: number
   name: string
   email: string
-  role: UserRole
+  account_type: AccountType
   reg_no?: string
   course?: string
   phone?: string       // 10 digits; "0000000000" = placeholder on older accounts
-  club_name?: string
-  position?: string
   interests?: string   // comma-separated tag ids
   created_at: string
+  club_roles: ClubRole[]   // current roles: pending, active, rejected
 }
 
 // ── Admin people lists ───────────────────────────────────
@@ -32,40 +45,39 @@ export interface Registrant extends Person {
   registered_at: string
 }
 
+// A club role with the person holding it: club team lists and the DSW's review queue
+export interface ClubRoleDetail extends Person {
+  id: number
+  club_id: number
+  club_name: string
+  role: ClubRoleKind
+  status: ClubRoleStatus
+  title: string | null
+  proposed_by_name: string | null
+  multi_club_exception: boolean
+  created_at: string
+  reviewed_at: string | null
+}
+
+export interface Account extends Person {
+  account_type: AccountType
+  is_active: boolean
+  created_at: string
+}
+
+export interface AuditEntry {
+  id: number
+  actor_name: string | null   // null = done from the command line / system
+  action: string              // e.g. "club_role.approve"
+  entity_type: string
+  entity_id: number | null
+  details: Record<string, unknown>
+  created_at: string
+}
+
 export interface ClubMember extends Person {
   joined_at: string
   registered_events: { id: number; title: string }[]   // this club's events they registered for
-}
-
-export interface TokenResponse {
-  access_token: string
-  refresh_token: string
-  token_type: string
-  user: User
-}
-
-export interface LoginPayload {
-  email: string
-  password: string
-  role: UserRole
-}
-
-export interface RegisterStudentPayload {
-  name: string
-  email: string
-  password: string
-  reg_no?: string
-  course?: string
-  phone?: string
-  interests?: string[]
-}
-
-export interface RegisterMemberPayload {
-  name: string
-  email: string
-  password: string
-  club_name: string
-  position?: string
 }
 
 // ── Club ─────────────────────────────────────────────────
@@ -107,7 +119,7 @@ export interface Event {
   contact_info?: string
 }
 
-// ── Paginated listings (GET /api/events, GET /api/clubs) ──
+// ── Paginated listings ───────────────────────────────────
 export interface Page<T> {
   items: T[]
   total: number        // matching rows across all pages
@@ -130,7 +142,6 @@ export interface EventFilters {
 // Query params of GET /api/clubs
 export interface ClubFilters {
   q?: string
-  name?: string        // exact name
 }
 
 // ── Discussion ───────────────────────────────────────────
@@ -139,7 +150,7 @@ export interface Discussion {
   event_id: number
   user_id: number
   user_name: string
-  user_role: string       // "student" | "member"
+  user_role: AccountType
   content: string
   parent_id: number | null
   is_official: boolean    // author is an admin of the event's club → show "Admin" badge
@@ -148,10 +159,7 @@ export interface Discussion {
   replies: Discussion[]
 }
 
-export interface DiscussionPage {
-  items: Discussion[]
-  total: number           // total top-level comments, across all pages
-}
+export type DiscussionPage = Page<Discussion>   // total = top-level comments only
 
 // ── Notification ─────────────────────────────────────────
 export interface Notification {
@@ -168,6 +176,31 @@ export interface NotificationList {
   items: Notification[]
   unread: number
 }
+
+// ── Permissions (mirror the User methods in backend/app/models/user.py) ──
+export const TEAM_ROLES: ClubRoleKind[] = ['owner', 'editor', 'faculty_coordinator']
+
+export const ACCOUNT_LABELS: Record<AccountType, string> = {
+  student: 'Student', faculty: 'Faculty', alumni: 'Alumni', dsw: 'DSW', platform_admin: 'Tech team',
+}
+
+export const ROLE_LABELS: Record<ClubRoleKind, string> = {
+  member: 'Member', editor: 'Editor', owner: 'Owner', faculty_coordinator: 'Faculty coordinator',
+}
+
+export const activeRoles = (user: User | null, ...kinds: ClubRoleKind[]): ClubRole[] =>
+  (user?.club_roles ?? []).filter(r => r.status === 'active' && (kinds.length === 0 || kinds.includes(r.role)))
+
+// The clubs this user helps run (one entry per club)
+export const teamClubs = (user: User | null): { id: number; name: string }[] =>
+  [...new Map(activeRoles(user, ...TEAM_ROLES).map(r => [r.club_id, { id: r.club_id, name: r.club_name }])).values()]
+
+export const canManage = (user: User | null, clubId: number): boolean =>
+  activeRoles(user, ...TEAM_ROLES).some(r => r.club_id === clubId)
+
+// May delete any comment on this club's events
+export const canModerate = (user: User | null, clubId: number): boolean =>
+  user?.account_type === 'dsw' || canManage(user, clubId)
 
 // ── UI helpers ───────────────────────────────────────────
 export const TAG_COLORS: Record<string, string> = {
@@ -191,6 +224,11 @@ export const ALL_TAGS = [
   { id: 'sports',     label: 'Sports' },
   { id: 'social',     label: 'Social Impact' },
 ]
+
+// "Dr. Meenakshi Rao" -> "Meenakshi" (titles like Dr. / Prof. are skipped); initialOf -> "M"
+export const firstName = (name: string | undefined): string =>
+  name?.split(' ').find(w => w && !w.endsWith('.')) ?? name ?? ''
+export const initialOf = (name: string | undefined): string => (firstName(name)[0] ?? 'U').toUpperCase()
 
 export const splitTags = (tags: string): string[] =>
   tags.split(',').map(t => t.trim()).filter(Boolean)

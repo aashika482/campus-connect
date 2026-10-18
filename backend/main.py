@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.db.database import engine
-from app.api.routes import auth, events, clubs, users, discussions, notifications, uploads
+from app.api.routes import auth, events, clubs, users, discussions, notifications, uploads, admin
 
 
 @asynccontextmanager
@@ -38,6 +38,7 @@ app.include_router(clubs.router,  prefix="/api/clubs",  tags=["Clubs"])
 app.include_router(discussions.router, prefix="/api/discussions", tags=["Discussions"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(uploads.router, prefix="/api/uploads", tags=["Uploads"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin (DSW / platform)"])
 
 @app.get("/")
 async def root():

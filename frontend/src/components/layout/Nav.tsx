@@ -3,8 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/context/authStore'
 import { notificationsApi } from '@/api/client'
 import { GlobalSearch } from './GlobalSearch'
-import { getTimeAgo } from '@/types'
-import type { Event, Club, Notification } from '@/types'
+import { getTimeAgo, teamClubs, firstName, initialOf } from '@/types'
+import type { Event, Club, Notification, User } from '@/types'
 
 const lp = { fill: 'none', stroke: 'currentColor', strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 
@@ -22,6 +22,17 @@ const SparkStar = () => (
     <path d="M7 0 C7.18 5.6 9.8 8.2 14 10 C9.8 11.8 7.18 14.4 7 20 C6.82 14.4 4.2 11.8 0 10 C4.2 8.2 6.82 5.6 7 0 Z"/>
   </svg>
 )
+
+// The workspaces a user can open: a nav link and a Profile button each; the first one's badge shows by their name
+export interface Workspace { path: string; nav: string; label: string; badge: string }
+export function workspaces(user: User | null): Workspace[] {
+  if (!user) return []
+  const list: Workspace[] = []
+  if (user.account_type === 'dsw') list.push({ path: '/dsw', nav: 'DSW', label: 'DSW Console', badge: 'DSW' })
+  if (user.account_type === 'platform_admin') list.push({ path: '/platform', nav: 'Platform', label: 'Platform Console', badge: 'Tech' })
+  if (teamClubs(user).length > 0) list.push({ path: '/admin', nav: 'Dashboard', label: 'Club Dashboard', badge: 'Team' })
+  return list
+}
 
 const NAV_ITEMS = [
   { path: '/',         label: 'Home',     Icon: HomeIco },
@@ -41,7 +52,8 @@ interface Props {
 export function Nav({ onViewEvent, onViewClub }: Props) {
   const navigate  = useNavigate()
   const location  = useLocation()
-  const { user, logout } = useAuthStore()
+  const { user } = useAuthStore()
+  const links = workspaces(user)
   const [showSearch, setShowSearch] = useState(false)
   const [showNotif,  setShowNotif]  = useState(false)
   const [notifs, setNotifs] = useState<Notification[]>([])
@@ -98,12 +110,12 @@ export function Nav({ onViewEvent, onViewClub }: Props) {
               </button>
             )
           })}
-          {user?.role === 'member' && (
-            <button onClick={() => navigate('/admin')}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5, fontFamily: 'var(--mono)', transition: 'all 0.15s', color: location.pathname === '/admin' ? 'var(--orange)' : 'var(--gray2)', borderBottom: location.pathname === '/admin' ? '2px solid var(--orange)' : '2px solid transparent', marginBottom: -1 }}>
-              <DashIco />Dashboard
+          {links.map(w => (
+            <button key={w.path} onClick={() => navigate(w.path)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.5, fontFamily: 'var(--mono)', transition: 'all 0.15s', color: location.pathname === w.path ? 'var(--orange)' : 'var(--gray2)', borderBottom: location.pathname === w.path ? '2px solid var(--orange)' : '2px solid transparent', marginBottom: -1 }}>
+              <DashIco />{w.nav}
             </button>
-          )}
+          ))}
         </div>
 
         {/* Right actions */}
@@ -163,10 +175,10 @@ export function Nav({ onViewEvent, onViewClub }: Props) {
 
           {/* Profile */}
           <button onClick={() => navigate('/profile')} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {user?.role === 'member' && <span style={{ fontSize: 10, color: 'var(--orange)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 1, border: '1px solid rgba(212,86,26,0.3)', padding: '3px 8px', background: 'rgba(212,86,26,0.08)' }}>Admin</span>}
-            <span style={{ fontSize: 11, color: 'var(--gray2)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{user?.name?.split(' ')[0]}</span>
+            {links[0] && <span style={{ fontSize: 10, color: 'var(--orange)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 1, border: '1px solid rgba(212,86,26,0.3)', padding: '3px 8px', background: 'rgba(212,86,26,0.08)' }}>{links[0].badge}</span>}
+            <span style={{ fontSize: 11, color: 'var(--gray2)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{firstName(user?.name)}</span>
             <div style={{ width: 34, height: 34, background: 'var(--orange)', color: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 14, fontFamily: 'var(--head)', boxShadow: '0 0 18px rgba(212,86,26,0.35)' }}>
-              {(user?.name ?? 'U')[0].toUpperCase()}
+              {initialOf(user?.name)}
             </div>
           </button>
         </div>

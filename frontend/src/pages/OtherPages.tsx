@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react'
 import { useAuthStore } from '@/context/authStore'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useEventsWhere, useUserEvents } from '@/hooks/useData'
-import { getEventColor, splitTags, getTimeAgo, ALL_TAGS, TAG_COLORS } from '@/types'
+import { getEventColor, splitTags, getTimeAgo, teamClubs, initialOf, ALL_TAGS, TAG_COLORS, ROLE_LABELS, ACCOUNT_LABELS } from '@/types'
 import type { Event, Discussion } from '@/types'
-import { eventsApi, clubsApi, discussionsApi, usersApi } from '@/api/client'
+import { eventsApi, clubsApi, discussionsApi, usersApi, apiError } from '@/api/client'
 import { ImageUpload } from '@/components/ui/ImageUpload'
+import { TabBar } from '@/components/ui/ListControls'
 import { useToastStore } from '@/context/toastStore'
-import { MembersTab, RegistrationsTab } from './AdminPeople'
+import { MembersTab, RegistrationsTab, TeamTab } from './AdminPeople'
+import { workspaces } from '@/components/layout/Nav'
 
 // ── SavedPage ─────────────────────────────────────────────
 export function SavedPage({ onViewEvent }: { onViewEvent: (ev: Event) => void }) {
@@ -67,6 +69,7 @@ export function ProfilePage() {
   const navigate = useNavigate()
   const { toast } = useToastStore()
   const { registered, saved } = useUserEvents()
+  const links = workspaces(user)
   const { events: registeredEvents } = useEventsWhere(registered.length ? { ids: registered.join(',') } : null)
 
   // Phone editing ("0000000000" is the placeholder given to older accounts)
@@ -81,9 +84,8 @@ export function ProfilePage() {
       setUser(r.data)
       setEditingPhone(false)
       toast('Phone number updated', 'success')
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail
-      toast(Array.isArray(detail) ? 'Enter a valid 10-digit phone number' : 'Failed to update phone', 'error')
+    } catch (err) {
+      toast(apiError(err, 'Failed to update phone'), 'error')
     } finally {
       setSavingPhone(false)
     }
@@ -103,15 +105,14 @@ export function ProfilePage() {
       <div className="pg-hdr" style={{ padding: '40px 40px 32px' }}>
         <div style={{ position: 'relative', zIndex: 1, maxWidth: 900, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 24 }}>
           <div style={{ width: 72, height: 72, background: 'var(--orange)', color: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 28, fontFamily: 'var(--head)', flexShrink: 0 }}>
-            {(user?.name ?? 'U')[0].toUpperCase()}
+            {initialOf(user?.name)}
           </div>
           <div>
             <h1 style={{ fontFamily: 'var(--head)', fontSize: 32, fontWeight: 800, letterSpacing: '-1px' }}>{user?.name}</h1>
             <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginTop: 4 }}>
-              {user?.email} · <span style={{ color: 'var(--orange)', textTransform: 'uppercase', letterSpacing: 1 }}>{user?.role}</span>
+              {user?.email} · <span style={{ color: 'var(--orange)', textTransform: 'uppercase', letterSpacing: 1 }}>{ACCOUNT_LABELS[user?.account_type ?? 'student']}</span>
             </div>
             {user?.reg_no && <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', marginTop: 3 }}>{user.reg_no} · {user.course}</div>}
-            {user?.club_name && <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', marginTop: 3 }}>{user.club_name} · {user.position}</div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>
               {editingPhone ? (
                 <>
@@ -156,6 +157,27 @@ export function ProfilePage() {
           </div>
         )}
 
+        {/* Club roles: memberships, team roles and requests */}
+        {(user?.club_roles.length ?? 0) > 0 && (
+          <div style={{ marginBottom: 32 }}>
+            <div style={{ fontFamily: 'var(--head)', fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Your Clubs</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {user!.club_roles.map(r => (
+                <button key={r.id} onClick={() => navigate(`/clubs/${r.club_id}`)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', background: 'var(--dark2)', border: '1px solid var(--dark3)', cursor: 'pointer', textAlign: 'left', width: '100%' }}>
+                  <span style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 600, flex: 1 }}>{r.club_name}</span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>{[ROLE_LABELS[r.role], r.title].filter(Boolean).join(' · ')}</span>
+                  {r.status !== 'active' && (
+                    <span style={{ fontSize: 9, fontFamily: 'var(--mono)', padding: '2px 7px', color: r.status === 'pending' ? '#EAB308' : '#EF4444', border: `1px solid ${r.status === 'pending' ? 'rgba(234,179,8,0.35)' : 'rgba(239,68,68,0.35)'}` }}>
+                      {r.status === 'pending' ? 'Waiting for DSW' : 'Not approved'}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Registered events */}
         {registered.length > 0 && (
           <div style={{ marginBottom: 32 }}>
@@ -179,11 +201,11 @@ export function ProfilePage() {
         )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-          {user?.role === 'member' && (
-            <button onClick={() => navigate('/admin')} className="btn-p">
-              Club Dashboard →
+          {links.map(w => (
+            <button key={w.path} onClick={() => navigate(w.path)} className="btn-p">
+              {w.label} →
             </button>
-          )}
+          ))}
           <button onClick={handleLogout} className="btn-g">Sign Out</button>
         </div>
       </div>
@@ -533,9 +555,8 @@ function EventForm({ clubId, event, onSuccess, onCancel }: EventFormProps) {
         toast(`"${payload.title}" published successfully!`, 'success')
       }
       onSuccess()
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail
-      toast(typeof detail === 'string' ? detail : isEdit ? 'Failed to save changes' : 'Failed to publish event', 'error')
+    } catch (err) {
+      toast(apiError(err, isEdit ? 'Failed to save changes' : 'Failed to publish event'), 'error')
     } finally {
       setSubmitting(false)
     }
@@ -780,7 +801,7 @@ function EventForm({ clubId, event, onSuccess, onCancel }: EventFormProps) {
 }
 
 // ── AdminPage ─────────────────────────────────────────────
-type AdminTab = 'overview' | 'members' | 'registrations'
+type AdminTab = 'overview' | 'members' | 'registrations' | 'team'
 
 export function AdminPage() {
   const { user } = useAuthStore()
@@ -790,17 +811,22 @@ export function AdminPage() {
   const [editingEvent, setEditingEvent] = useState<Event | null>(null)
   const [deletingEvent, setDeletingEvent] = useState<Event | null>(null)   // shown in the confirm dialog
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
-  const [clubId, setClubId] = useState<number | null>(null)
+  // The clubs this user helps run; ?club= picks one (the first by default)
+  const myClubs = teamClubs(user)
+  const [params, setParams] = useSearchParams()
+  const club = myClubs.find(c => c.id === Number(params.get('club'))) ?? myClubs[0] ?? null
+  const clubId = club?.id ?? null
+  const myTitle = user?.club_roles.find(r => r.club_id === clubId && r.status === 'active' && r.role !== 'member')
   const [memberCount, setMemberCount] = useState<number | null>(null)
   const [regCounts, setRegCounts] = useState<Record<number, number>>({})
   const [discussions, setDiscussions] = useState<Discussion[]>([])
 
-  // Active tab (and event, for Registrations) live in the URL: /admin?tab=registrations&event=12
-  const [params, setParams] = useSearchParams()
-  const tab = (['members', 'registrations'].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as AdminTab
+  // Club, tab (and event, for Registrations) live in the URL: /admin?club=3&tab=registrations&event=12
+  const tab = (['members', 'registrations', 'team'].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as AdminTab
   const tabEventId = Number(params.get('event')) || null
-  const goTab = (t: AdminTab, eventId?: number) => {
+  const goTab = (t: AdminTab, eventId?: number, toClub = clubId) => {
     const next: Record<string, string> = {}
+    if (toClub !== null && toClub !== myClubs[0]?.id) next.club = String(toClub)
     if (t !== 'overview') next.tab = t
     if (eventId) next.event = String(eventId)
     setParams(next)
@@ -813,16 +839,10 @@ export function AdminPage() {
   const [replyContent, setReplyContent] = useState('')
   const [replySubmitting, setReplySubmitting] = useState(false)
 
-  // The admin's club, looked up by its exact name (admins are linked to clubs by name)
   useEffect(() => {
-    if (!user?.club_name) return
-    clubsApi.list({ name: user.club_name, limit: 1 })
-      .then(r => {
-        const club = r.data.items[0]
-        if (club) { setClubId(club.id); setMemberCount(club.member_count) }
-      })
-      .catch(() => {})
-  }, [user?.club_name])
+    if (clubId === null) return
+    clubsApi.get(clubId).then(r => setMemberCount(r.data.member_count)).catch(() => {})
+  }, [clubId])
 
   // This club's events (one club: small enough to load in full)
   const { events: myEvents, refresh } = useEventsWhere(clubId !== null ? { club_id: clubId } : null)
@@ -841,14 +861,14 @@ export function AdminPage() {
       results.forEach((r: any) => { map[r.id] = r.count })
       setRegCounts(map)
     })
-  }, [myEvents.length])
+  }, [myEvents])
 
   // Fetch discussion feed (first page; "Load more" appends older pages)
   const DISC_PAGE_SIZE = 10
   const fetchDiscussions = async () => {
     setDiscLoading(true)
     try {
-      const r = await discussionsApi.adminFeed({ limit: DISC_PAGE_SIZE })
+      const r = await discussionsApi.adminFeed(clubId!, { limit: DISC_PAGE_SIZE })
       setDiscussions(r.data.items)
       setDiscHasMore(r.data.items.length === DISC_PAGE_SIZE && r.data.items.length < r.data.total)
     } catch {
@@ -863,7 +883,7 @@ export function AdminPage() {
     if (!last) return
     setDiscLoadingMore(true)
     try {
-      const r = await discussionsApi.adminFeed({ before_id: last.id, limit: DISC_PAGE_SIZE })
+      const r = await discussionsApi.adminFeed(clubId!, { before_id: last.id, limit: DISC_PAGE_SIZE })
       setDiscussions(prev => [...prev, ...r.data.items])
       setDiscHasMore(r.data.items.length === DISC_PAGE_SIZE)
     } catch {
@@ -874,13 +894,16 @@ export function AdminPage() {
   }
 
   useEffect(() => {
-    if (user?.role === 'member') fetchDiscussions()
-  }, [user?.role])
+    if (clubId !== null) fetchDiscussions()
+  }, [clubId])
 
-  if (user?.role !== 'member') {
+  if (!user || clubId === null || !club) {
     return (
-      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--gray2)' }}>Admin access only</div>
+      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--gray2)', lineHeight: 1.7 }}>
+          You're not on any club's team yet.<br />
+          Students can ask the DSW to run a club from the club's page.
+        </div>
       </div>
     )
   }
@@ -904,7 +927,7 @@ export function AdminPage() {
       setReplyingTo(null)
       setReplyContent('')
     } catch (err: any) {
-      toast(typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : 'Failed to reply', 'error')
+      toast(apiError(err, 'Failed to reply'), 'error')
     } finally {
       setReplySubmitting(false)
     }
@@ -919,7 +942,7 @@ export function AdminPage() {
         : prev.map(d => (d.id === disc.parent_id ? { ...d, replies: d.replies.filter(r => r.id !== disc.id) } : d)))
       toast('Comment deleted', 'success')
     } catch (err: any) {
-      toast(typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : 'Failed to delete', 'error')
+      toast(apiError(err, 'Failed to delete'), 'error')
     }
   }
 
@@ -947,9 +970,8 @@ export function AdminPage() {
       setDeletingEvent(null)
       refresh()
       fetchDiscussions()   // the event's comments were deleted with it
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail
-      toast(typeof detail === 'string' ? detail : 'Failed to delete event', 'error')
+    } catch (err) {
+      toast(apiError(err, 'Failed to delete event'), 'error')
     } finally {
       setDeleteSubmitting(false)
     }
@@ -960,13 +982,20 @@ export function AdminPage() {
       {/* Header */}
       <div className="pg-hdr" style={{ padding: '40px 40px 32px' }}>
         <div style={{ position: 'relative', zIndex: 1, maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--orange)', textTransform: 'uppercase', letterSpacing: 4, marginBottom: 8 }}>{user.club_name}</div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--orange)', textTransform: 'uppercase', letterSpacing: 4, marginBottom: 8 }}>
+            {myClubs.length > 1 ? (
+              <select className="inp" value={clubId} onChange={e => goTab('overview', undefined, Number(e.target.value))}
+                style={{ width: 'auto', padding: '4px 8px', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--orange)' }}>
+                {myClubs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            ) : club.name}
+          </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
             <div>
               <h1 style={{ fontFamily: 'var(--head)', fontSize: 38, fontWeight: 800, letterSpacing: '-2px' }}>
                 Club Dashboard<span style={{ color: 'var(--orange)' }}>.</span>
               </h1>
-              <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginTop: 8 }}>{user.position} · {user.name}</p>
+              <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginTop: 8 }}>{[user.name, myTitle && (myTitle.title || ROLE_LABELS[myTitle.role])].filter(Boolean).join(' · ')}</p>
             </div>
             {!showForm && !editingEvent && (
               <button
@@ -982,25 +1011,18 @@ export function AdminPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ borderBottom: '1px solid var(--dark3)' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 40px', display: 'flex', gap: 4 }}>
-          {([
-            { id: 'overview',      label: 'Overview' },
-            { id: 'members',       label: `Members${memberCount !== null ? ` (${memberCount})` : ''}` },
-            { id: 'registrations', label: 'Registrations' },
-          ] as const).map(t => (
-            <button key={t.id} onClick={() => goTab(t.id)}
-              style={{ padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5, color: tab === t.id ? 'var(--orange)' : 'var(--gray2)', borderBottom: `2px solid ${tab === t.id ? 'var(--orange)' : 'transparent'}`, marginBottom: -1, transition: 'color 0.15s' }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <TabBar active={tab} onChange={t => goTab(t)} tabs={[
+        { id: 'overview',      label: 'Overview' },
+        { id: 'members',       label: `Members${memberCount !== null ? ` (${memberCount})` : ''}` },
+        { id: 'registrations', label: 'Registrations' },
+        { id: 'team',          label: 'Team' },
+      ] as const} />
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 40px' }}>
 
-        {tab === 'members' && <MembersTab clubName={user.club_name ?? 'club'} />}
+        {tab === 'members' && <MembersTab clubId={clubId} clubName={club.name} onOpenEvent={id => goTab('registrations', id)} />}
+
+        {tab === 'team' && <TeamTab clubId={clubId} />}
 
         {tab === 'registrations' && (
           <RegistrationsTab

@@ -47,7 +47,7 @@ def do_run_migrations(connection) -> None:
 
 async def run_async_migrations() -> None:
     # NullPool: a one-off command, no need to keep connections around
-    engine = create_async_engine(DATABASE_URL, poolclass=pool.NullPool, connect_args={"ssl": True})
+    engine = create_async_engine(DATABASE_URL, poolclass=pool.NullPool, connect_args={"ssl": settings.DATABASE_SSL})
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await engine.dispose()

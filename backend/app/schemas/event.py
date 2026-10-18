@@ -1,9 +1,18 @@
-# backend/app/schemas/event.py
-# REPLACE your existing file with this
-
 from pydantic import BaseModel, StringConstraints
-from typing import Optional, List, Annotated
+from typing import Optional, List, Annotated, Generic, Literal, TypeVar
 from datetime import date, datetime
+
+from app.models.membership import ClubRoleKind, ClubRoleStatus
+from app.models.user import AccountType
+from app.schemas.user import LowerEmail
+
+T = TypeVar("T")
+
+
+class Page(BaseModel, Generic[T]):
+    """One page of a paginated listing."""
+    items: List[T]
+    total: int   # matches across all pages (for "Load more" and counts)
 
 
 # ── Club ────────────────────────────────────────────────
@@ -22,9 +31,7 @@ class ClubOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ClubPage(BaseModel):
-    items: List[ClubOut]
-    total: int   # matching clubs across all pages
+ClubPage = Page[ClubOut]
 
 
 class ClubCreate(BaseModel):
@@ -71,9 +78,7 @@ class EventOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class EventPage(BaseModel):
-    items: List[EventOut]
-    total: int   # matching events across all pages
+EventPage = Page[EventOut]
 
 
 class EventCreate(BaseModel):
@@ -87,7 +92,6 @@ class EventCreate(BaseModel):
     tags: List[str]
     team_size: Optional[str] = None
     poster_url: Optional[str] = None
-    is_hot: bool = False
 
     # ── New fields ──
     venue: Optional[str] = None
@@ -107,7 +111,6 @@ class EventUpdate(BaseModel):
     tags: Optional[List[str]] = None
     team_size: Optional[str] = None
     poster_url: Optional[str] = None
-    is_hot: Optional[bool] = None
     is_published: Optional[bool] = None
 
     # ── New fields ──
@@ -142,6 +145,81 @@ class MemberOut(PersonOut):
     registered_events: List[EventRef]   # this club's events the member registered for
 
 
+# ── Club roles (team requests, DSW review) ───────────────
+class ClubRoleDetailOut(PersonOut):
+    """A club role with the person holding it: team lists and the DSW's review queue."""
+    id: int
+    club_id: int
+    club_name: str
+    role: ClubRoleKind
+    status: ClubRoleStatus
+    title: Optional[str] = None
+    proposed_by_name: Optional[str] = None
+    multi_club_exception: bool = False
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+
+
+ClubRolePage = Page[ClubRoleDetailOut]
+
+Title = Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)]
+
+
+class OwnerRequest(BaseModel):
+    title: Optional[Title] = None          # e.g. "President"
+
+
+class EditorProposal(BaseModel):
+    email: LowerEmail                      # the student being proposed
+    title: Optional[Title] = None
+
+
+class FacultyAssignment(BaseModel):
+    email: LowerEmail                      # a faculty account
+
+
+class RoleReview(BaseModel):
+    """approve / reject a pending request, or end an active role (revoke)."""
+    action: Literal["approve", "reject", "end"]
+    # Approving: let this student hold team roles in more than one club
+    multi_club_exception: bool = False
+
+
+# ── Accounts (DSW / platform admin) ──────────────────────
+class AccountOut(PersonOut):
+    account_type: AccountType
+    is_active: bool
+    created_at: datetime
+
+
+AccountPage = Page[AccountOut]
+
+
+class AccountTypeUpdate(BaseModel):
+    account_type: Literal[AccountType.student, AccountType.faculty, AccountType.alumni]
+
+
+class DswAccountGrant(BaseModel):
+    email: LowerEmail
+
+
+class AuditLogOut(BaseModel):
+    id: int
+    actor_name: Optional[str] = None
+    action: str
+    entity_type: str
+    entity_id: Optional[int] = None
+    details: dict
+    created_at: datetime
+
+
+AuditLogPage = Page[AuditLogOut]
+
+
+class HotUpdate(BaseModel):
+    is_hot: bool
+
+
 class RegistrationStatus(BaseModel):
     event_id: int
     is_registered: bool
@@ -169,9 +247,7 @@ class DiscussionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class DiscussionPage(BaseModel):
-    items: List[DiscussionOut]
-    total: int   # total top-level comments (not just this page)
+DiscussionPage = Page[DiscussionOut]   # total = top-level comments only
 
 
 # Trims whitespace, rejects empty comments and anything over 2000 chars

@@ -1,7 +1,3 @@
-// frontend/src/api/client.ts
-// REPLACE your existing file with this
-// Changes: added discussionsApi section
-
 import axios from 'axios'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
@@ -68,11 +64,20 @@ api.interceptors.response.use(
   }
 )
 
+// The message to show for a failed request: the backend's "detail" (a string, or for a
+// 422 validation error a list whose first message is used), else the fallback
+export function apiError(err: any, fallback: string): string {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg).replace(/^Value error, /, '')
+  return fallback
+}
+
 // ── Auth ─────────────────────────────────────────────────
 export const authApi = {
+  config:          ()             => api.get('/auth/config'),   // { email_domains: { student: [...], faculty: [...] } }
   login:           (data: object) => api.post('/auth/login', data),
-  registerStudent: (data: object) => api.post('/auth/register/student', data),
-  registerMember:  (data: object) => api.post('/auth/register/member', data),
+  register:        (data: object) => api.post('/auth/register', data),
   refresh:         (data: object) => api.post('/auth/refresh', data),
   logout:          ()             => api.post('/auth/logout'),
 }
@@ -99,15 +104,33 @@ export const clubsApi = {
   list:     (params?: object) => api.get('/clubs', { params }),   // paginated: { items, total }
   get:      (id: number) => api.get(`/clubs/${id}`),
   join:     (id: number) => api.post(`/clubs/${id}/join`),
-  leave:    (id: number) => api.delete(`/clubs/${id}/join`),
-  myClubs:  ()           => api.get('/clubs/me/joined'),
-  adminMembers: ()       => api.get('/clubs/admin/members'),   // admin, own club
+  // The club's team only:
+  members:  (id: number) => api.get(`/clubs/${id}/members`),
+  team:     (id: number) => api.get(`/clubs/${id}/team`),        // owner, editors, faculty (incl. pending)
+  requestOwnership: (id: number, title?: string) => api.post(`/clubs/${id}/owner-request`, { title: title || null }),
+  proposeEditor:    (id: number, email: string, title?: string) => api.post(`/clubs/${id}/editors`, { email, title: title || null }),
 }
 
 // ── Users ────────────────────────────────────────────────
 export const usersApi = {
   me:     ()           => api.get('/users/me'),
   update: (data: object) => api.patch('/users/me', data),
+}
+
+// ── Admin: DSW office and tech team (paginated lists: { items, total }) ──
+export const adminApi = {
+  clubRoles:     (params?: object) => api.get('/admin/dsw/club-roles', { params }),   // { status, club_id }
+  reviewRole:    (id: number, action: 'approve' | 'reject' | 'end', multiClubException = false) =>
+                   api.patch(`/admin/dsw/club-roles/${id}`, { action, multi_club_exception: multiClubException }),
+  assignFaculty: (clubId: number, email: string) => api.post(`/admin/dsw/clubs/${clubId}/faculty`, { email }),
+  accounts:      (params?: object) => api.get('/admin/dsw/accounts', { params }),     // { q, account_type }
+  setAccountType: (userId: number, accountType: 'student' | 'faculty' | 'alumni') =>
+                   api.patch(`/admin/dsw/accounts/${userId}`, { account_type: accountType }),
+  setHot:        (eventId: number, isHot: boolean) => api.patch(`/admin/dsw/events/${eventId}/hot`, { is_hot: isHot }),
+  dswAccounts:   () => api.get('/admin/platform/dsw-accounts'),
+  grantDsw:      (email: string) => api.post('/admin/platform/dsw-accounts', { email }),
+  removeDsw:     (userId: number) => api.delete(`/admin/platform/dsw-accounts/${userId}`),
+  auditLog:      (params?: object) => api.get('/admin/audit-log', { params }),
 }
 
 // ── Discussions ──────────────────────────────────────────
@@ -122,7 +145,7 @@ export const discussionsApi = {
   edit:       (eventId: number, commentId: number, data: { content: string }) =>
                 api.patch(`/discussions/${eventId}/${commentId}`, data),
   delete:     (eventId: number, commentId: number)       => api.delete(`/discussions/${eventId}/${commentId}`),
-  adminFeed:  (params?: PageParams)                      => api.get('/discussions/admin/feed', { params }),
+  adminFeed:  (clubId: number, params?: PageParams)      => api.get('/discussions/admin/feed', { params: { club_id: clubId, ...params } }),
 }
 
 // ── Uploads (signed Cloudinary; admin only) ──────────────

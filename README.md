@@ -8,10 +8,24 @@
 
 ## What It Does
 
-CamPulse helps students at MUJ discover clubs and events happening on campus. There are two types of users:
+CamPulse helps students at MUJ discover clubs and events happening on campus. Everyone signs up with their college email, one account per person; the email's domain makes it a student or a faculty account.
 
-- **Students** — browse events, register, save favourites, join clubs, and leave comments
-- **Club Members** — manage their club profile, post events with poster images, view registrations, and reply to student discussions via a dashboard
+**Account types** (one per person):
+
+- **Student** — browse events, register, save favourites, join clubs, comment
+- **Faculty** — can be made a club's faculty coordinator by the DSW
+- **Alumni** — set by the DSW on graduation; team roles end, memberships stay
+- **DSW** (Dean of Student Welfare office) — approves everything: club owners and editors, faculty coordinators, account types; creates clubs, features events as "hot", moderates any discussion
+- **Platform admin** (tech team) — appoints DSW accounts; no business authority
+
+**Club roles** (per club, a person can hold several):
+
+- **Member** — joined the club (students; no leaving from the app)
+- **Owner** — leads the club; a student asks on the club's page and the DSW approves. One per club
+- **Editor** — proposed by the owner or an editor, approved by the DSW (up to `MAX_EDITORS_PER_CLUB`)
+- **Faculty coordinator** — assigned by the DSW
+
+Owners, editors and faculty coordinators are the club's *team*: they post events, see members and registrations, and moderate their club's discussions. A student is on one club's team at a time unless the DSW grants an exception. Every governance action goes to an audit log.
 
 ---
 
@@ -36,10 +50,13 @@ CamPulse helps students at MUJ discover clubs and events happening on campus. Th
 
 - **Event discovery** — browse all campus events with filters by tag, search by name
 - **Event detail pages** — poster, description, venue, dates, registration fee, prize pool
-- **Club pages** — club info, member count, join/leave, social links
+- **Club pages** — club info, member count, join, social links, ask to run the club
 - **Registration & saving** — register for events, save them for later
 - **Discussions** — comment on events and reply to each other, with official club replies badged; 15-minute edit window and in-app reply notifications
 - **Admin dashboard** — post events, view registrations, manage discussion feed
+- **Club teams, verified** — owner/editor requests wait for the DSW; a club's dashboard opens only for its approved team
+- **DSW console** — review requests, see and end club teams, assign faculty, switch account types, read the activity log
+- **Platform console** — the tech team appoints DSW accounts
 - **Auth** — separate registration flows for students and club committee members
 
 ---
@@ -96,6 +113,27 @@ uvicorn main:app --reload
 # API running at http://localhost:8000
 ```
 
+**Fresh database:** after `alembic upgrade head`, load the real club list, then (optionally) demo data:
+
+```bash
+python -m app.db.seed                                             # the real clubs (skips if any exist)
+DEMO_MODE=true DEMO_PASSWORD=pick-one python -m app.db.demo        # wipes everything except clubs, adds demo
+                                                                   # people, teams and events dated around today
+```
+
+**First platform admin:** only possible from the command line. They then appoint DSW accounts in the web app.
+
+```bash
+python -m app.db.bootstrap_admin tech@jaipur.manipal.edu           # creates or promotes; --revoke to undo
+```
+
+**Tests** (auth and permissions, against a real Postgres that starts by itself):
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 ### Frontend
 
 ```bash
@@ -126,6 +164,10 @@ npm run dev
 | `JWT_SECRET_KEY` | Secret key for signing JWTs                      |
 | `DEBUG`          | `False` in production                            |
 | `CORS_ORIGINS`   | Comma-separated allowed frontend origins (default `http://localhost:5173`) |
+| `DATABASE_SSL`   | `True` (default, Neon). `False` only for a local Postgres without SSL |
+| `STUDENT_EMAIL_DOMAINS` / `FACULTY_EMAIL_DOMAINS` | Comma-separated college domains allowed to sign up (defaults `muj.manipal.edu` / `jaipur.manipal.edu`) |
+| `MAX_EDITORS_PER_CLUB` | Most active editors per club (default `5`; a club has one owner) |
+| `DEMO_MODE` / `DEMO_PASSWORD` | Only for `python -m app.db.demo`. Never set `DEMO_MODE` in production |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Signed poster uploads (optional) |
 
 ### Frontend (Vercel)
@@ -140,10 +182,11 @@ npm run dev
 
 | Table           | Purpose                             |
 | --------------- | ----------------------------------- |
-| `users`         | Students and club committee members |
+| `users`         | One account per person, with its account type |
 | `clubs`         | Club profiles                       |
 | `events`        | Events posted by clubs              |
-| `memberships`   | User ↔ Club joins                   |
+| `club_roles`    | A person's roles in a club (member, editor, owner, faculty coordinator) and their status |
+| `audit_log`     | Who did what, when (governance actions) |
 | `registrations` | User ↔ Event registrations          |
 | `saved_events`  | User saved events                   |
 | `discussions`   | Comments and replies on events      |

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { clubsApi } from '@/api/client'
+import { clubsApi, apiError } from '@/api/client'
 import { useUserClubs, useEventsWhere } from '@/hooks/useData'
+import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
-import { splitTags, TAG_COLORS, getEventColor } from '@/types'
+import { splitTags, TAG_COLORS, getEventColor, canManage } from '@/types'
 import type { Club, Event } from '@/types'
 
 // ── Icons ─────────────────────────────────────────────────
@@ -16,7 +17,8 @@ export function ClubDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { toast } = useToastStore()
-  const { joinedClubs, toggleMembership } = useUserClubs()
+  const { joinedClubs, canJoin, join } = useUserClubs()
+  const { user } = useAuthStore()
 
   const [club, setClub] = useState<Club | null>(null)
   const [loading, setLoading] = useState(true)
@@ -122,9 +124,10 @@ export function ClubDetailPage() {
                 {/* Divider */}
                 <div style={{ width: 1, height: 20, background: 'var(--dark4)' }} />
 
-                {/* Join/Leave button */}
-                <button
-                  onClick={() => toggleMembership(club, n => setClub(c => (c ? { ...c, member_count: n } : c)))}
+                {/* Join button (students; there's no leaving from the app) */}
+                {(isMember || canJoin) && <button
+                  onClick={() => join(club, n => setClub(c => (c ? { ...c, member_count: n } : c)))}
+                  disabled={isMember}
                   style={{
                     padding: '9px 22px',
                     fontFamily: 'var(--head)', fontSize: 11, fontWeight: 700,
@@ -132,12 +135,12 @@ export function ClubDetailPage() {
                     border: `1.5px solid ${isMember ? club.color : 'var(--dark4)'}`,
                     background: isMember ? `${club.color}18` : 'rgba(242,234,220,0.04)',
                     color: isMember ? club.color : 'var(--cream)',
-                    borderRadius: 8, cursor: 'pointer',
+                    borderRadius: 8, cursor: isMember ? 'default' : 'pointer',
                     transition: 'all 0.15s ease',
                   }}
                 >
                   {isMember ? '✓ Joined' : '+ Join Club'}
-                </button>
+                </button>}
 
                 {/* Social links */}
                 {club.instagram && (
@@ -157,6 +160,10 @@ export function ClubDetailPage() {
                   </a>
                 )}
               </div>
+
+              {canManage(user, clubId)
+                ? <button className="btn-g" onClick={() => navigate(`/admin?club=${clubId}`)} style={{ marginTop: 20, padding: '9px 18px', fontSize: 10, letterSpacing: 1.5 }}>Manage club →</button>
+                : user?.account_type === 'student' && <OwnershipRequest clubId={clubId} clubName={club.name} />}
             </div>
           </div>
         </div>
@@ -196,6 +203,55 @@ export function ClubDetailPage() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── Asking the DSW to run this club ───────────────────────
+function OwnershipRequest({ clubId, clubName }: { clubId: number; clubName: string }) {
+  const { user, refreshUser } = useAuthStore()
+  const { toast } = useToastStore()
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [sending, setSending] = useState(false)
+  const request = user?.club_roles.find(r => r.club_id === clubId && r.role !== 'member' && r.status !== 'active')
+
+  const send = async () => {
+    setSending(true)
+    try {
+      await clubsApi.requestOwnership(clubId, title.trim())
+      await refreshUser()
+      setOpen(false)
+      toast('Request sent to the DSW', 'success')
+    } catch (err) {
+      toast(apiError(err, 'Could not send the request'), 'error')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const note: React.CSSProperties = { marginTop: 20, fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--gray2)' }
+  if (request?.status === 'pending') {
+    return <div style={note}>Your request to be {request.role === 'owner' ? 'owner' : 'an editor'} of {clubName} is waiting for the DSW.</div>
+  }
+  if (!open) {
+    return (
+      <div style={note}>
+        {request?.status === 'rejected' && "The DSW didn't approve your last request. "}
+        <button onClick={() => setOpen(true)} style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--orange)', textDecoration: 'underline', textUnderlineOffset: 3 }}>
+          Do you run {clubName}? Ask the DSW to make you its owner
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div style={{ marginTop: 20, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <input className="inp" value={title} onChange={e => setTitle(e.target.value)} placeholder="Your title, e.g. President"
+        style={{ width: 240, padding: '8px 12px', fontSize: 12 }} />
+      <button className="btn-p" disabled={sending} onClick={send} style={{ padding: '9px 16px', fontSize: 10, letterSpacing: 1.5 }}>
+        {sending ? 'Sending…' : 'Send to DSW'}
+      </button>
+      <button className="btn-g" onClick={() => setOpen(false)} style={{ padding: '9px 14px', fontSize: 10 }}>Cancel</button>
     </div>
   )
 }

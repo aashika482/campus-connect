@@ -11,7 +11,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.config import settings
-from app.core.deps import require_club_member
+from app.core.deps import require_club_team
 from app.models.user import User
 from app.schemas.event import UploadStatus, UploadSignature
 
@@ -29,13 +29,13 @@ def _sign(params: dict[str, str]) -> str:
 
 
 @router.get("/status", response_model=UploadStatus)
-async def upload_status(user: User = Depends(require_club_member)):
+async def upload_status(user: User = Depends(require_club_team)):
     """Lets the poster field decide between upload and paste-a-URL mode."""
     return UploadStatus(enabled=settings.cloudinary_enabled)
 
 
 @router.post("/signature", response_model=UploadSignature)
-async def upload_signature(user: User = Depends(require_club_member)):
+async def upload_signature(user: User = Depends(require_club_team)):
     """A one-time signature for one poster upload. Cloudinary rejects it after 1 hour."""
     if not settings.cloudinary_enabled:
         raise HTTPException(status_code=503, detail="Image uploads aren't configured on the server")

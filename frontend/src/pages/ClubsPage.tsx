@@ -13,7 +13,7 @@ const PAGE_SIZE = 12
 export function ClubsPage({ onViewClub }: Props) {
   const navigate = useNavigate()
   const { clubs, total, loading, loadingMore, loadMore, updateMemberCount } = usePagedClubs({}, PAGE_SIZE)
-  const { joinedClubs, toggleMembership } = useUserClubs()
+  const { joinedClubs, canJoin, join } = useUserClubs()
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: '100vh' }}>
@@ -42,9 +42,9 @@ export function ClubsPage({ onViewClub }: Props) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
               {clubs.map((cl, i) => (
                 <ClubCard key={cl.id} club={cl} delay={(i % PAGE_SIZE) * 30}
-                  isMember={joinedClubs.includes(cl.id)}
+                  isMember={joinedClubs.includes(cl.id)} canJoin={canJoin}
                   onView={() => navigate(`/clubs/${cl.id}`)}
-                  onToggle={c => toggleMembership(c, n => updateMemberCount(c.id, n))} />
+                  onJoin={c => join(c, n => updateMemberCount(c.id, n))} />
               ))}
             </div>
             <LoadMore shown={clubs.length} total={total} loading={loadingMore} onClick={loadMore} noun="clubs" />
@@ -55,9 +55,9 @@ export function ClubsPage({ onViewClub }: Props) {
   )
 }
 
-function ClubCard({ club, delay, isMember, onView, onToggle }: {
-  club: Club; delay: number; isMember: boolean;
-  onView: () => void; onToggle: (c: Club) => void;
+function ClubCard({ club, delay, isMember, canJoin, onView, onJoin }: {
+  club: Club; delay: number; isMember: boolean; canJoin: boolean;
+  onView: () => void; onJoin: (c: Club) => void;
 }) {
   const tags = splitTags(club.tags)
   return (
@@ -86,10 +86,12 @@ function ClubCard({ club, delay, isMember, onView, onToggle }: {
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>{club.member_count} members</span>
-        <button onClick={e => { e.stopPropagation(); onToggle(club) }}
-          style={{ padding: '7px 14px', fontSize: 11, fontFamily: 'var(--mono)', fontWeight: 600, letterSpacing: 0.5, border: `1.5px solid ${isMember ? club.color : 'var(--dark4)'}`, background: isMember ? `${club.color}18` : 'transparent', color: isMember ? club.color : 'var(--gray2)', transition: 'all 0.15s' }}>
-          {isMember ? 'Joined ✓' : '+ Join'}
-        </button>
+        {(isMember || canJoin) && (
+          <button onClick={e => { e.stopPropagation(); onJoin(club) }} disabled={isMember}
+            style={{ padding: '7px 14px', fontSize: 11, fontFamily: 'var(--mono)', fontWeight: 600, letterSpacing: 0.5, border: `1.5px solid ${isMember ? club.color : 'var(--dark4)'}`, background: isMember ? `${club.color}18` : 'transparent', color: isMember ? club.color : 'var(--gray2)', cursor: isMember ? 'default' : 'pointer', transition: 'all 0.15s' }}>
+            {isMember ? 'Joined ✓' : '+ Join'}
+          </button>
+        )}
       </div>
     </div>
   )

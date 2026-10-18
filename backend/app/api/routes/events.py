@@ -9,7 +9,7 @@ from app.models.club import Club
 from app.models.event import Event
 from app.models.membership import Registration, SavedEvent
 from app.models.user import User
-from app.core.deps import get_current_active_user, require_club_member
+from app.core.deps import get_or_404, get_current_active_user, ensure_can_manage
 from app.schemas.event import (
     EventOut, EventPage, EventCreate, EventUpdate, RegistrationStatus, SaveStatus, RegistrantOut,
 )
@@ -20,19 +20,10 @@ router = APIRouter()
 REQUIRED_FIELDS = {"title", "description", "start_date", "end_date", "date_display", "tags"}
 
 
-async def _get_event_or_404(db: AsyncSession, event_id: int) -> Event:
-    result = await db.execute(select(Event).where(Event.id == event_id))
-    event = result.scalar_one_or_none()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event
-
-
 async def _get_own_event(db: AsyncSession, event_id: int, user: User) -> Event:
-    """The event, if it belongs to the admin's club (same string match as discussions.py)."""
-    event = await _get_event_or_404(db, event_id)
-    if event.club_name != user.club_name:
-        raise HTTPException(status_code=403, detail="You can only manage your own club's events")
+    """The event, if this user is on its club's team."""
+    event = await get_or_404(db, Event, event_id)
+    ensure_can_manage(user, event.club_id)
     return event
 
 
@@ -112,21 +103,18 @@ async def list_events(
 
 @router.get("/{event_id}", response_model=EventOut)
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
-    return await _get_event_or_404(db, event_id)
+    return await get_or_404(db, Event, event_id)
 
 
 @router.post("", response_model=EventOut, status_code=201)
 async def create_event(
     payload: EventCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_club_member),
+    user: User = Depends(get_current_active_user),
 ):
-    """Club admins can post events for their own club only."""
-    club = (await db.execute(select(Club).where(Club.id == payload.club_id))).scalar_one_or_none()
-    if not club:
-        raise HTTPException(status_code=404, detail="Club not found")
-    if club.name != user.club_name:
-        raise HTTPException(status_code=403, detail="You can only post events for your own club")
+    """A club's team posts events for that club only."""
+    ensure_can_manage(user, payload.club_id)
+    club = await get_or_404(db, Club, payload.club_id)
     _check_dates(payload.start_date, payload.end_date)
 
     event = Event(
@@ -141,7 +129,6 @@ async def create_event(
         tags=",".join(payload.tags),
         team_size=payload.team_size,
         poster_url=payload.poster_url,
-        is_hot=payload.is_hot,
         venue=payload.venue,
         time_info=payload.time_info,
         registration_fee=payload.registration_fee,
@@ -159,7 +146,7 @@ async def update_event(
     event_id: int,
     payload: EventUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_club_member),
+    user: User = Depends(get_current_active_user),
 ):
     """Club admins can edit their own club's events. Only the fields sent are changed."""
     event = await _get_own_event(db, event_id, user)
@@ -184,7 +171,7 @@ async def update_event(
 async def delete_event(
     event_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_club_member),
+    user: User = Depends(get_current_active_user),
 ):
     """Club admins can delete their own club's events.
     The DB cascades remove its registrations, saves, discussions and notifications.
@@ -203,7 +190,7 @@ async def register_for_event(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
-    event = await _get_event_or_404(db, event_id)
+    event = await get_or_404(db, Event, event_id)
     # Registration stays open through the deadline day itself (matches the event page)
     if event.reg_deadline and event.reg_deadline < date.today():
         raise HTTPException(status_code=400, detail="Registration for this event has closed")
@@ -257,7 +244,7 @@ async def registration_count(
 async def list_registrations(
     event_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_club_member),
+    user: User = Depends(get_current_active_user),
 ):
     """Who registered for one of the admin's own events (newest first; the UI can re-sort)."""
     await _get_own_event(db, event_id, user)

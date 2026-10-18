@@ -14,7 +14,7 @@ class Club(Base):
     description: Mapped[str]  = mapped_column(Text)
     color:       Mapped[str]  = mapped_column(String(10), default="#D4561A")
     tags:        Mapped[str]  = mapped_column(String(300))   # comma-separated
-    member_count:Mapped[int]  = mapped_column(Integer, default=0)   # cached COUNT(memberships), recounted on join/leave
+    member_count:Mapped[int]  = mapped_column(Integer, default=0)   # cached count of active member roles, recounted on join
     is_open:     Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Social links
@@ -25,4 +25,3 @@ class Club(Base):
 
     # Relationships
     events:      Mapped[list["Event"]]      = relationship("Event",      back_populates="club")
-    memberships: Mapped[list["Membership"]] = relationship("Membership", back_populates="club")

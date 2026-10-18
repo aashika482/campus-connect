@@ -1,25 +1,30 @@
-// Admin dashboard tabs: club members and per-event registrations.
-// Both use PeopleTable (search + newest/oldest sort + CSV download).
+// People lists, all built on PeopleTable (search + newest/oldest sort + CSV download):
+//  - Club Dashboard tabs: members, per-event registrations, the club's team
+//  - the DSW and Platform consoles (GovernancePages.tsx) reuse PeopleTable and the role columns
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { eventsApi, clubsApi } from '@/api/client'
-import type { Event, Person, Registrant, ClubMember } from '@/types'
+import { clubsApi, eventsApi, apiError } from '@/api/client'
+import { useAuthStore } from '@/context/authStore'
+import { useToastStore } from '@/context/toastStore'
+import { activeRoles, ROLE_LABELS } from '@/types'
+import type { Event, Person, Registrant, ClubMember, ClubRoleDetail } from '@/types'
 
 const PLACEHOLDER_PHONE = '0000000000'
 
-const fmtDate = (iso: string) =>
+export const fmtDate = (iso: string) =>
   new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 
 // ── Generic table ─────────────────────────────────────────
-interface Column<T> {
+export interface Column<T> {
   label: string
   cell: (row: T) => React.ReactNode
   csv: (row: T) => string
   width?: string
 }
 
-function PeopleTable<T extends Person>({ rows, columns, dateOf, dateLabel, fileName, emptyText, loading, error }: {
+export function PeopleTable<T extends Person>({ rows, columns, dateOf, dateLabel, fileName, emptyText, loading, error, rowKey = r => r.user_id, academic = true }: {
   rows: T[]
+  academic?: boolean                  // show Reg No. + Course (lists about clubs' teams don't need them)
+  rowKey?: (row: T) => number         // defaults to user_id (lists where a person can appear twice pass their own)
   columns: Column<T>[]
   dateOf: (row: T) => string        // the date the sort arrows order by
   dateLabel: string                 // e.g. "Registered on"
@@ -37,14 +42,14 @@ function PeopleTable<T extends Person>({ rows, columns, dateOf, dateLabel, fileN
     .sort((a, b) => (newestFirst ? -1 : 1) * (new Date(dateOf(a)).getTime() - new Date(dateOf(b)).getTime()))
 
   const downloadCsv = () => {
-    const header = ['Name', 'Email', 'Phone', 'Reg No.', 'Course', ...columns.map(c => c.label), dateLabel]
+    const header = ['Name', 'Email', 'Phone', ...(academic ? ['Reg No.', 'Course'] : []), ...columns.map(c => c.label), dateLabel]
     // ="..." makes Excel keep digits as text (no dropped leading zeros / 9.88E+09)
     const asText = (v: string | null) => (v && /^\d+$/.test(v) ? `="${v}"` : safe(v ?? ''))
     // A cell starting with = + - @ would run as a formula in Excel; a leading ' stops that
     const safe = (v: string) => (/^[=+\-@]/.test(v) ? `'${v}` : v)
     const lines = visible.map(r => [
       safe(r.name), safe(r.email),
-      r.phone === PLACEHOLDER_PHONE ? '' : asText(r.phone), asText(r.reg_no), safe(r.course ?? ''),
+      r.phone === PLACEHOLDER_PHONE ? '' : asText(r.phone), ...(academic ? [asText(r.reg_no), safe(r.course ?? '')] : []),
       ...columns.map(c => safe(c.csv(r))), fmtDate(dateOf(r)),
     ])
     const quote = (v: string) => (v.startsWith('="') ? v : /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
@@ -102,8 +107,8 @@ function PeopleTable<T extends Person>({ rows, columns, dateOf, dateLabel, fileN
                 <th style={th}>Name</th>
                 <th style={th}>Email</th>
                 <th style={th}>Phone</th>
-                <th style={th}>Reg No.</th>
-                <th style={th}>Course</th>
+                {academic && <th style={th}>Reg No.</th>}
+                {academic && <th style={th}>Course</th>}
                 {columns.map(c => <th key={c.label} style={{ ...th, width: c.width }}>{c.label}</th>)}
                 <th style={th}>
                   <button onClick={() => setNewestFirst(v => !v)} style={{ ...th, padding: 0, border: 'none', color: 'var(--orange)', cursor: 'pointer' }}>
@@ -114,7 +119,7 @@ function PeopleTable<T extends Person>({ rows, columns, dateOf, dateLabel, fileN
             </thead>
             <tbody>
               {visible.map(r => (
-                <tr key={r.user_id}>
+                <tr key={rowKey(r)}>
                   <td style={{ ...td, color: 'var(--cream)', fontFamily: 'var(--head)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
                     {r.name}
                   </td>
@@ -124,8 +129,8 @@ function PeopleTable<T extends Person>({ rows, columns, dateOf, dateLabel, fileN
                       ? <span title="Placeholder — this user hasn't added a phone number" style={{ color: 'var(--gray2)' }}>not set</span>
                       : r.phone}
                   </td>
-                  <td style={td}>{r.reg_no || '—'}</td>
-                  <td style={td}>{r.course || '—'}</td>
+                  {academic && <td style={td}>{r.reg_no || '—'}</td>}
+                  {academic && <td style={td}>{r.course || '—'}</td>}
                   {columns.map(c => <td key={c.label} style={td}>{c.cell(r)}</td>)}
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDate(dateOf(r))}</td>
                 </tr>
@@ -138,30 +143,32 @@ function PeopleTable<T extends Person>({ rows, columns, dateOf, dateLabel, fileN
   )
 }
 
-function Empty({ text }: { text: string }) {
+export function Empty({ text }: { text: string }) {
   return (
     <div style={{ padding: '48px 20px', textAlign: 'center', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)' }}>{text}</div>
   )
 }
 
-const errText = (err: any, fallback: string) =>
-  typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : fallback
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
 // ── Members tab ───────────────────────────────────────────
-export function MembersTab({ clubName }: { clubName: string }) {
-  const navigate = useNavigate()
+export function MembersTab({ clubId, clubName, onOpenEvent }: {
+  clubId: number
+  clubName: string
+  onOpenEvent: (eventId: number) => void   // show that event's registrations
+}) {
   const [rows, setRows] = useState<ClubMember[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    clubsApi.adminMembers()
+    setLoading(true)
+    clubsApi.members(clubId)
       .then(r => setRows(r.data))
-      .catch(err => setError(errText(err, 'Failed to load members')))
+      .catch(err => setError(apiError(err, 'Failed to load members')))
       .finally(() => setLoading(false))
-  }, [])
+  }, [clubId])
 
   return (
     <PeopleTable
@@ -179,7 +186,7 @@ export function MembersTab({ clubName }: { clubName: string }) {
         cell: r => r.registered_events.length === 0 ? '—' : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
             {r.registered_events.map(e => (
-              <button key={e.id} onClick={() => navigate(`/admin?tab=registrations&event=${e.id}`)}
+              <button key={e.id} onClick={() => onOpenEvent(e.id)}
                 title="See this event's registrations"
                 style={{ padding: '2px 8px', fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--orange)', border: '1px solid rgba(212,86,26,0.3)', background: 'rgba(212,86,26,0.06)', borderRadius: 4, cursor: 'pointer' }}>
                 {e.title}
@@ -209,7 +216,7 @@ export function RegistrationsTab({ events, eventId, onPickEvent }: {
     setError(null)
     eventsApi.registrations(eventId)
       .then(r => setRows(r.data))
-      .catch(err => { setRows([]); setError(errText(err, 'Failed to load registrations')) })
+      .catch(err => { setRows([]); setError(apiError(err, 'Failed to load registrations')) })
       .finally(() => setLoading(false))
   }, [eventId])
 
@@ -240,6 +247,88 @@ export function RegistrationsTab({ events, eventId, onPickEvent }: {
           columns={[]}
         />
       )}
+    </div>
+  )
+}
+
+// ── Club role columns (Team tab, DSW console) ─────────────
+const STATUS_COLORS = { pending: '#EAB308', active: '#22C55E', rejected: '#EF4444', ended: 'var(--gray2)' }
+
+export const roleColumns = {
+  club: { label: 'Club', csv: r => r.club_name, cell: r => <span style={{ color: 'var(--cream)' }}>{r.club_name}</span> } as Column<ClubRoleDetail>,
+  role: {
+    label: 'Role',
+    csv: r => [ROLE_LABELS[r.role], r.title].filter(Boolean).join(' · '),
+    cell: r => <span>{ROLE_LABELS[r.role]}{r.title && <span style={{ color: 'var(--gray2)' }}> · {r.title}</span>}</span>,
+  } as Column<ClubRoleDetail>,
+  status: {
+    label: 'Status',
+    csv: r => r.status,
+    cell: r => <span style={{ color: STATUS_COLORS[r.status], textTransform: 'capitalize' }}>{r.status === 'pending' ? 'Waiting for DSW' : r.status}</span>,
+  } as Column<ClubRoleDetail>,
+  proposedBy: { label: 'Proposed by', csv: r => r.proposed_by_name ?? '', cell: r => r.proposed_by_name || '—' } as Column<ClubRoleDetail>,
+}
+
+// ── Team tab ──────────────────────────────────────────────
+export function TeamTab({ clubId }: { clubId: number }) {
+  const { user } = useAuthStore()
+  const { toast } = useToastStore()
+  const [rows, setRows] = useState<ClubRoleDetail[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [email, setEmail] = useState('')
+  const [title, setTitle] = useState('')
+  const [sending, setSending] = useState(false)
+  // Editors are proposed by the club's owner or editors; the DSW approves
+  const canPropose = activeRoles(user, 'owner', 'editor').some(r => r.club_id === clubId)
+
+  const load = () => {
+    setLoading(true)
+    clubsApi.team(clubId)
+      .then(r => setRows(r.data.items))
+      .catch(err => setError(apiError(err, 'Failed to load the team')))
+      .finally(() => setLoading(false))
+  }
+  useEffect(load, [clubId])
+
+  const propose = async () => {
+    setSending(true)
+    try {
+      await clubsApi.proposeEditor(clubId, email.trim(), title.trim())
+      setEmail(''); setTitle('')
+      toast('Proposed. The DSW will review it.', 'success')
+      load()
+    } catch (err) {
+      toast(apiError(err, 'Could not propose this person'), 'error')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div>
+      {canPropose && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 18 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', textTransform: 'uppercase', letterSpacing: 1.5 }}>Propose an editor</span>
+          <input className="inp" value={email} onChange={e => setEmail(e.target.value)} placeholder="Their college email" style={{ width: 260, fontSize: 12 }} />
+          <input className="inp" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title (optional)" style={{ width: 170, fontSize: 12 }} />
+          <button className="btn-p" disabled={sending || !email.trim()} onClick={propose} style={{ padding: '9px 16px', fontSize: 10, letterSpacing: 1.5 }}>
+            {sending ? 'Sending…' : 'Send to DSW'}
+          </button>
+        </div>
+      )}
+      <PeopleTable
+        rows={rows}
+        rowKey={r => r.id}
+        academic={false}
+        loading={loading}
+        error={error}
+        dateOf={r => r.created_at}
+        dateLabel="Since"
+        fileName={`club-${clubId}-team`}
+        emptyText="No team yet."
+        columns={[roleColumns.role, roleColumns.status, roleColumns.proposedBy]}
+      />
     </div>
   )
 }

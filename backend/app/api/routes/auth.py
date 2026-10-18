@@ -3,15 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.database import get_db
-from app.models.user import User, UserRole
-from app.models.club import Club
+from app.core.config import settings
+from app.models.user import User, AccountType
 from app.core.security import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
 )
 from app.schemas.user import (
-    LoginRequest, RegisterStudentRequest, RegisterMemberRequest,
-    TokenResponse, RefreshRequest, UserOut,
+    LoginRequest, RegisterRequest, TokenResponse, RefreshRequest, UserOut, AuthConfig,
 )
 
 router = APIRouter()
@@ -24,10 +23,16 @@ async def _get_user_by_email(db: AsyncSession, email: str) -> User | None:
 
 def _make_token_response(user: User) -> TokenResponse:
     return TokenResponse(
-        access_token=create_access_token(user.id, user.role.value),
+        access_token=create_access_token(user.id, user.account_type.value),
         refresh_token=create_refresh_token(user.id),
         user=UserOut.model_validate(user),
     )
+
+
+@router.get("/config", response_model=AuthConfig)
+async def auth_config():
+    """Which email domains can sign up, and as what (shown on the sign-up page)."""
+    return AuthConfig(email_domains=settings.email_domains)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -35,47 +40,31 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = await _get_user_by_email(db, payload.email)
     if not user or not verify_password(payload.password, user.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    if user.role != payload.role:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"This account is registered as '{user.role.value}', not '{payload.role.value}'")
     return _make_token_response(user)
 
 
-@router.post("/register/student", response_model=TokenResponse, status_code=201)
-async def register_student(payload: RegisterStudentRequest, db: AsyncSession = Depends(get_db)):
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    """Sign up with a college email. Its domain makes the account a student or faculty one;
+    every other account type (alumni, DSW, platform admin) is assigned later, never chosen."""
+    kind = settings.account_kind_for(payload.email)
+    if kind is None:
+        allowed = ", ".join(f"@{d}" for ds in settings.email_domains.values() for d in ds)
+        raise HTTPException(status_code=400, detail=f"Sign up with your college email ({allowed})")
     if await _get_user_by_email(db, payload.email):
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    is_student = kind == "student"
     user = User(
         name=payload.name,
         email=payload.email,
         password=hash_password(payload.password),
-        role=UserRole.student,
-        reg_no=payload.reg_no,
-        course=payload.course,
+        account_type=AccountType(kind),
         phone=payload.phone,
-        interests=",".join(payload.interests) if payload.interests else None,
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    return _make_token_response(user)
-
-
-@router.post("/register/member", response_model=TokenResponse, status_code=201)
-async def register_member(payload: RegisterMemberRequest, db: AsyncSession = Depends(get_db)):
-    if await _get_user_by_email(db, payload.email):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    # club_name must exactly match a real club: admin ownership checks compare names as strings
-    club = (await db.execute(select(Club).where(Club.name == payload.club_name))).scalar_one_or_none()
-    if not club:
-        raise HTTPException(status_code=400, detail="Please select a valid club")
-    user = User(
-        name=payload.name,
-        email=payload.email,
-        password=hash_password(payload.password),
-        role=UserRole.member,
-        club_name=club.name,
-        position=payload.position,
-        phone=payload.phone,
+        # Academic details only mean something for students
+        reg_no=payload.reg_no if is_student else None,
+        course=payload.course if is_student else None,
+        interests=",".join(payload.interests) if is_student and payload.interests else None,
     )
     db.add(user)
     await db.commit()

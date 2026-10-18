@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
-import { eventsApi, discussionsApi } from '@/api/client'
+import { eventsApi, discussionsApi, adminApi, apiError } from '@/api/client'
 import { useUserEvents } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
-import { splitTags, getEventColor, getTimeAgo, TAG_COLORS } from '@/types'
+import { splitTags, getEventColor, getTimeAgo, canModerate, initialOf, TAG_COLORS } from '@/types'
 import type { Event, Discussion, User } from '@/types'
 
 const PAGE_SIZE = 10
@@ -12,8 +12,6 @@ const PAGE_SIZE = 10
 const EDIT_WINDOW_MINUTES = 15
 
 // Backend errors come back as { detail: "..." }; validation errors (422) have a list instead
-const errMsg = (err: any, fallback: string) =>
-  typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : fallback
 
 export function EventDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -125,7 +123,7 @@ export function EventDetailPage() {
       setDiscussions(prev => [r.data, ...prev])
       setDiscTotal(t => t + 1)
       setNewComment(''); toast('Comment posted!', 'success')
-    } catch (err) { toast(errMsg(err, 'Failed to post comment'), 'error') }
+    } catch (err) { toast(apiError(err, 'Failed to post comment'), 'error') }
   }
 
   // Open the reply box under a top-level comment. Replying to a reply opens the same
@@ -141,7 +139,7 @@ export function EventDetailPage() {
       const r = await discussionsApi.reply(eventId, commentId, { content: replyText.trim() })
       patchItem(commentId, c => ({ ...c, replies: [...c.replies, r.data] }))
       setReplyText(''); setReplyingTo(null); toast('Reply posted!', 'success')
-    } catch (err) { toast(errMsg(err, 'Failed to post reply'), 'error') }
+    } catch (err) { toast(apiError(err, 'Failed to post reply'), 'error') }
   }
 
   const handleStartEdit = (item: Discussion) => { setEditingId(item.id); setEditText(item.content) }
@@ -152,7 +150,7 @@ export function EventDetailPage() {
       const r = await discussionsApi.edit(eventId, item.id, { content: editText.trim() })
       patchItem(item.id, d => ({ ...d, content: r.data.content, edited_at: r.data.edited_at }))
       setEditingId(null); setEditText(''); toast('Comment updated', 'success')
-    } catch (err) { toast(errMsg(err, 'Failed to edit comment'), 'error') }
+    } catch (err) { toast(apiError(err, 'Failed to edit comment'), 'error') }
   }
 
   const handleDeleteComment = async (item: Discussion) => {
@@ -165,7 +163,16 @@ export function EventDetailPage() {
         patchItem(item.parent_id, c => ({ ...c, replies: c.replies.filter(r => r.id !== item.id) }))
       }
       toast('Comment deleted', 'info')
-    } catch (err) { toast(errMsg(err, 'Failed to delete comment'), 'error') }
+    } catch (err) { toast(apiError(err, 'Failed to delete comment'), 'error') }
+  }
+
+  const handleToggleHot = async () => {
+    if (!event) return
+    try {
+      const r = await adminApi.setHot(event.id, !event.is_hot)
+      setEvent(r.data)
+      toast(r.data.is_hot ? 'Featured in Hot Right Now' : 'No longer featured', 'success')
+    } catch (err) { toast(apiError(err, 'Failed to update'), 'error') }
   }
 
   if (loading) return <PageLoader />
@@ -307,6 +314,16 @@ export function EventDetailPage() {
                   }}>
                     🔥 Hot
                   </span>
+                )}
+                {/* Only the DSW decides what's featured in "Hot Right Now" */}
+                {user?.account_type === 'dsw' && (
+                  <button onClick={handleToggleHot} style={{
+                    padding: '4px 12px', fontSize: 10, fontFamily: 'var(--mono)',
+                    border: '1.5px solid rgba(212,86,26,0.4)', color: 'var(--orange)',
+                    borderRadius: 20, letterSpacing: 1.2, textTransform: 'uppercase',
+                  }}>
+                    {event.is_hot ? 'Unfeature' : 'Feature as hot'}
+                  </button>
                 )}
               </div>
 
@@ -578,7 +595,7 @@ export function EventDetailPage() {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontFamily: 'var(--head)', fontSize: 15, fontWeight: 700, color,
             }}>
-              {(user?.name ?? 'U')[0].toUpperCase()}
+              {initialOf(user?.name)}
             </div>
             <div style={{ flex: 1 }}>
               <textarea
@@ -634,7 +651,7 @@ export function EventDetailPage() {
                     comment={c}
                     ctx={{
                       currentUser: user,
-                      eventClubName: event.club_name,
+                      eventClubId: event.club_id,
                       color,
                       replyingTo, replyText,
                       onOpenReply: handleOpenReply,
@@ -803,7 +820,7 @@ function DetailPanel({ icon, label, value, color }: {
 // Everything a comment card needs from the page, bundled so it isn't 15 separate props
 interface ThreadCtx {
   currentUser: User | null
-  eventClubName: string
+  eventClubId: number
   color: string
   replyingTo: number | null
   replyText: string
@@ -953,10 +970,8 @@ function ItemActions({ item, ctx, replyLabel, onReplyClick }: {
 }) {
   const me = ctx.currentUser
   const isOwn = me?.id === item.user_id
-  // Admins moderate only their own club's events (matches the backend check)
-  const canModerate = me?.role === 'member' && me.club_name === ctx.eventClubName
   const canEdit = isOwn && withinEditWindow(item.created_at) && ctx.editingId !== item.id
-  const canDelete = isOwn || canModerate
+  const canDelete = isOwn || canModerate(me, ctx.eventClubId)
 
   return (
     <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -1021,7 +1036,7 @@ function Avatar({ name, official, size }: { name: string; official: boolean; siz
       fontFamily: 'var(--head)', fontSize: size > 30 ? 13 : 11, fontWeight: 700,
       color: official ? 'var(--orange)' : 'var(--gray)',
     }}>
-      {name[0].toUpperCase()}
+      {initialOf(name)}
     </div>
   )
 }

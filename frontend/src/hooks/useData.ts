@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { eventsApi, clubsApi } from '@/api/client'
+import { eventsApi, clubsApi, adminApi, apiError } from '@/api/client'
+import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
-import type { Event, Club, Page, EventFilters, ClubFilters } from '@/types'
+import type { Event, Club, Page, EventFilters, ClubFilters, ClubRoleDetail, ClubRoleStatus } from '@/types'
+import { activeRoles } from '@/types'
 
 // The events and clubs listings are paginated: the API returns { items, total }.
 // Two ways to use them:
@@ -22,7 +24,7 @@ export function useDebounced<T>(value: T, ms = 300): T {
 }
 
 // ── Generic "Load more" list ─────────────────────────────
-function usePaged<T>(fetchPage: (params: object) => Promise<{ data: Page<T> }>, filters: object | null, pageSize: number) {
+export function usePaged<T>(fetchPage: (params: object) => Promise<{ data: Page<T> }>, filters: object | null, pageSize: number) {
   const [items, setItems] = useState<T[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(filters !== null)
@@ -78,6 +80,7 @@ async function fetchAll<T>(fetchPage: (params: object) => Promise<{ data: Page<T
 
 export const fetchAllEvents = (filters: EventFilters) => fetchAll<Event>(eventsApi.list, filters)
 export const fetchAllClubs  = (filters: ClubFilters = {}) => fetchAll<Club>(clubsApi.list, filters)
+export const fetchAllClubRoles = (status: ClubRoleStatus) => fetchAll<ClubRoleDetail>(adminApi.clubRoles, { status })
 
 // ── Events ───────────────────────────────────────────────
 export function usePagedEvents(filters: EventFilters | null, pageSize = 12) {
@@ -149,9 +152,9 @@ export function useUserEvents() {
     try {
       await eventsApi.register(event.id)
       toast(`Registered for ${event.title}! 🎉`, 'success')
-    } catch (err: any) {
+    } catch (err) {
       setRegistered(p => p.filter(x => x !== event.id))
-      toast(err?.response?.data?.detail ?? 'Registration failed', 'error')
+      toast(apiError(err, 'Registration failed'), 'error')
     }
   }
 
@@ -162,7 +165,7 @@ export function useUserEvents() {
 export function usePagedClubs(filters: ClubFilters | null, pageSize = 12) {
   const { items, setItems, ...rest } = usePaged<Club>(clubsApi.list, filters, pageSize)
 
-  // After join/leave, show the new member count without refetching the list
+  // After joining, show the new member count without refetching the list
   const updateMemberCount = useCallback((clubId: number, count: number) => {
     setItems(p => p.map(c => (c.id === clubId ? { ...c, member_count: count } : c)))
   }, [setItems])
@@ -170,35 +173,26 @@ export function usePagedClubs(filters: ClubFilters | null, pageSize = 12) {
   return { clubs: items, updateMemberCount, ...rest }
 }
 
+// Clubs the signed-in user has joined (from their club roles), and joining one.
+// Only students can join, and there's no leaving from the app.
 export function useUserClubs() {
-  const [joinedClubs, setJoinedClubs] = useState<number[]>([])
+  const { user, refreshUser } = useAuthStore()
   const { toast } = useToastStore()
-
-  useEffect(() => {
-    clubsApi.myClubs()
-      .then(r => setJoinedClubs(r.data))
-      .catch(() => {})
-  }, [])
+  const joinedClubs = activeRoles(user, 'member').map(r => r.club_id)
+  const canJoin = user?.account_type === 'student'
 
   // onCount receives the club's new member count from the server
-  const toggleMembership = async (club: Club, onCount?: (count: number) => void) => {
-    const isMember = joinedClubs.includes(club.id)
-    setJoinedClubs(p => isMember ? p.filter(x => x !== club.id) : [...p, club.id])
+  const join = async (club: Club, onCount?: (count: number) => void) => {
+    if (!canJoin || joinedClubs.includes(club.id)) return
     try {
-      if (isMember) {
-        const r = await clubsApi.leave(club.id)
-        onCount?.(r.data.member_count)
-        toast(`Left ${club.name}`, 'info')
-      } else {
-        const r = await clubsApi.join(club.id)
-        onCount?.(r.data.member_count)
-        toast(`Joined ${club.name}!`, 'success')
-      }
-    } catch {
-      setJoinedClubs(p => isMember ? [...p, club.id] : p.filter(x => x !== club.id))
-      toast('Something went wrong', 'error')
+      const r = await clubsApi.join(club.id)
+      onCount?.(r.data.member_count)
+      await refreshUser()
+      toast(`Joined ${club.name}!`, 'success')
+    } catch (err) {
+      toast(apiError(err, 'Could not join the club'), 'error')
     }
   }
 
-  return { joinedClubs, toggleMembership }
+  return { joinedClubs, canJoin, join }
 }

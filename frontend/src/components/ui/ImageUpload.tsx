@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { uploadsApi } from '@/api/client'
+import { uploadsApi, apiError } from '@/api/client'
 
 // Uploads are signed by the backend (which holds the Cloudinary secret), so the
 // browser needs no Cloudinary config of its own. The file still goes straight to
@@ -94,8 +94,8 @@ export function ImageUpload({ value, onChange, error }: ImageUploadProps) {
 
       onChange(secureUrl)
     } catch (err: any) {
-      const detail = err?.response?.data?.detail   // from our backend (signature request)
-      setUploadError(`Upload failed: ${typeof detail === 'string' ? detail : err?.message ?? 'please try again'}`)
+      // A backend detail comes from the signature request; otherwise Cloudinary/network
+      setUploadError(`Upload failed: ${apiError(err, err?.message ?? 'please try again')}`)
     } finally {
       setUploading(false)
       setProgress(0)

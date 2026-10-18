@@ -1,8 +1,9 @@
 import re
-from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional, List
+from pydantic import AfterValidator, BaseModel, EmailStr, field_validator
+from typing import Annotated, Optional, List
 from datetime import datetime
-from app.models.user import UserRole
+from app.models.user import AccountType
+from app.models.membership import ClubRoleKind, ClubRoleStatus
 
 
 def normalize_phone(v: str) -> str:
@@ -14,42 +15,25 @@ def normalize_phone(v: str) -> str:
     return digits
 
 
+# Every email the API accepts is lowercased, so one address can never become two accounts
+LowerEmail = Annotated[EmailStr, AfterValidator(str.lower)]
+
+
 # ── Auth ────────────────────────────────────────────────
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: LowerEmail
     password: str
-    role: UserRole
 
 
-class RegisterStudentRequest(BaseModel):
+class RegisterRequest(BaseModel):
+    """One sign-up form for everyone: the email's domain decides student or faculty."""
     name: str
-    email: EmailStr
+    email: LowerEmail
     password: str
+    phone: str
     reg_no: Optional[str] = None
     course: Optional[str] = None
-    phone: str
     interests: Optional[List[str]] = []
-
-    @field_validator("password")
-    @classmethod
-    def password_min_length(cls, v):
-        if len(v) < 6:
-            raise ValueError("Password must be at least 6 characters")
-        return v
-
-    @field_validator("phone")
-    @classmethod
-    def valid_phone(cls, v):
-        return normalize_phone(v)
-
-
-class RegisterMemberRequest(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
-    club_name: str
-    position: Optional[str] = None
-    phone: str
 
     @field_validator("password")
     @classmethod
@@ -75,21 +59,42 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class AuthConfig(BaseModel):
+    """Public sign-up rules the frontend shows (from env, never hardcoded in the UI)."""
+    email_domains: dict[str, List[str]]   # {"student": [...], "faculty": [...]}
+
+
 # ── User ────────────────────────────────────────────────
+class ClubRoleOut(BaseModel):
+    id: int
+    club_id: int
+    club_name: str
+    role: ClubRoleKind
+    status: ClubRoleStatus
+    title: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class UserOut(BaseModel):
     id: int
     name: str
     email: str
-    role: UserRole
+    account_type: AccountType
     reg_no: Optional[str] = None
     course: Optional[str] = None
     phone: Optional[str] = None
-    club_name: Optional[str] = None
-    position: Optional[str] = None
     interests: Optional[str] = None
     created_at: datetime
+    club_roles: List[ClubRoleOut] = []   # current ones: pending, active and rejected (ended roles are history)
 
     model_config = {"from_attributes": True}
+
+    @field_validator("club_roles", mode="before")
+    @classmethod
+    def current_roles_only(cls, v):
+        return [r for r in v if getattr(r, "status", None) != ClubRoleStatus.ended]
 
 
 class UserUpdate(BaseModel):
