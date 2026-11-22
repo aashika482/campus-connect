@@ -5,7 +5,7 @@ import { useUserClubs, useEventsWhere } from '@/hooks/useData'
 import { ClubChat } from './ClubChat'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
-import { splitTags, TAG_COLORS, NOT_CATEGORIZED, getEventColor, canManage, onWorkingTeam, activeRoles, getTimeAgo, ROLE_LABELS, REACTIONS } from '@/types'
+import { splitTags, TAG_COLORS, NOT_CATEGORIZED, getEventColor, canManage, safeUrl, onWorkingTeam, activeRoles, getTimeAgo, ROLE_LABELS, REACTIONS } from '@/types'
 import type { Club, Event, MyApplication, Roster, Announcement, Reaction, Benefit, MyLeaveRequest, LeaveScope } from '@/types'
 
 // ── Icons ─────────────────────────────────────────────────
@@ -154,16 +154,16 @@ export function ClubDetailPage() {
                 </button>}
 
                 {/* Social links */}
-                {club.instagram && (
-                  <a href={club.instagram} target="_blank" rel="noopener noreferrer"
+                {safeUrl(club.instagram) && (
+                  <a href={safeUrl(club.instagram)} target="_blank" rel="noopener noreferrer"
                     style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', textDecoration: 'none', letterSpacing: 0.5, transition: 'color 0.15s' }}
                     onMouseOver={e => (e.currentTarget.style.color = 'var(--cream)')}
                     onMouseOut={e => (e.currentTarget.style.color = 'var(--gray2)')}>
                     <IgIco /> Instagram
                   </a>
                 )}
-                {club.linkedin && (
-                  <a href={club.linkedin} target="_blank" rel="noopener noreferrer"
+                {safeUrl(club.linkedin) && (
+                  <a href={safeUrl(club.linkedin)} target="_blank" rel="noopener noreferrer"
                     style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)', textDecoration: 'none', letterSpacing: 0.5, transition: 'color 0.15s' }}
                     onMouseOver={e => (e.currentTarget.style.color = 'var(--cream)')}
                     onMouseOut={e => (e.currentTarget.style.color = 'var(--gray2)')}>
@@ -700,7 +700,7 @@ function EventCard({ event: ev, delay, onClick }: { event: Event; delay: number;
       onClick={onClick}
     >
       {ev.poster_url
-        ? <img src={ev.poster_url} alt={ev.title} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+        ? <img src={safeUrl(ev.poster_url)} alt={ev.title} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
         : <div style={{ width: '100%', height: '100%', background: `linear-gradient(155deg, ${color}22 0%, var(--dark2) 65%)` }} />
       }
       <div className="pcard-grad" />

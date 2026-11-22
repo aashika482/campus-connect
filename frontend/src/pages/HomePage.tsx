@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { usePagedEvents, usePagedClubs, useUserEvents } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
 import { eventsApi } from '@/api/client'
-import { splitTags, getEventColor } from '@/types'
+import { splitTags, getEventColor, safeUrl } from '@/types'
 import type { Event } from '@/types'
 
 interface Props { onViewEvent: (ev: Event) => void }
@@ -109,7 +109,7 @@ function EventCard({ ev, onView, onSave, isSaved, isRegistered }: {
     <div className="pcard au" onClick={() => onView(ev)}
       style={isRegistered ? { boxShadow: '0 0 0 2px rgba(16,185,129,0.35)' } : {}}>
       {ev.poster_url
-        ? <img src={ev.poster_url} alt={ev.title} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+        ? <img src={safeUrl(ev.poster_url)} alt={ev.title} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
         : <div style={{ width: '100%', height: '100%', background: `linear-gradient(155deg, ${getEventColor(ev)}22 0%, var(--dark2) 65%)` }} />
       }
       <div className="pcard-grad" />

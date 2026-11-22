@@ -375,6 +375,17 @@ function AccountsTab() {
     }
   }
 
+  const setActive = async (a: Account, active: boolean) => {
+    if (!active && !window.confirm(`Deactivate ${a.name}? They're signed out everywhere and can't sign in until you reactivate them. Their history stays.`)) return
+    try {
+      const r = await adminApi.setActive(a.user_id, active)
+      setRows(p => p.map(x => (x.user_id === a.user_id ? r.data : x)))
+      toast(`${a.name} is ${active ? 'active again' : 'deactivated'}`, 'success')
+    } catch (err) {
+      toast(apiError(err, 'Could not change it'), 'error')
+    }
+  }
+
   return (
     <div>
       <input className="inp" value={q} onChange={e => setQ(e.target.value)} placeholder="Find anyone by name, email or reg no (server search, first 100)"
@@ -396,6 +407,13 @@ function AccountsTab() {
                 {SWITCHABLE.map(t => <option key={t} value={t}>{ACCOUNT_LABELS[t]}</option>)}
               </select>
             : <span style={{ color: 'var(--orange)' }}>{ACCOUNT_LABELS[r.account_type]}</span>,
+        }, {
+          label: 'Access',
+          csv: r => (r.is_active ? 'active' : 'deactivated'),
+          cell: r => !SWITCHABLE.includes(r.account_type) ? '—' : r.is_active
+            ? <button onClick={() => setActive(r, false)} style={btn('#EF4444')}>Deactivate</button>
+            : <span><span style={{ color: '#EF4444', marginRight: 8 }}>Deactivated</span>
+                <button onClick={() => setActive(r, true)} style={btn('#22C55E')}>Reactivate</button></span>,
         }]}
       />
     </div>
@@ -415,7 +433,29 @@ const ACTION_LABELS: Record<string, string> = {
   'user.remove_dsw': 'removed a DSW account',
   'user.grant_platform_admin': 'made a platform admin',
   'user.remove_platform_admin': 'removed a platform admin',
-  'club.create': 'created a club',
+  'user.deactivate': 'deactivated an account',
+  'user.reactivate': 'reactivated an account',
+  'user.add_password': 'added a password',
+  'user.change_password': 'changed their password',
+  'user.second_step': 'changed their sign-in second step',
+  'club_role.claim_coordinator': 'became a coordinator (named in the DSW\'s records)',
+  'club.join': 'joined a club',
+  'club.renew': 'renewed a club membership',
+  'club.settings': 'changed a club\'s settings',
+  'application.apply': 'applied to a working team',
+  'application.renew': 'asked to renew a working-team place',
+  'application.shortlist': 'shortlisted an applicant',
+  'application.recommend': 'recommended an applicant',
+  'application.approve': 'approved a working-team applicant',
+  'application.decline': 'declined a working-team applicant',
+  'leave.request': 'asked to leave a club',
+  'leave.approve': 'approved a leave request',
+  'leave.reject': 'rejected a leave request',
+  'club_request.submit': 'proposed a new club',
+  'club_request.confirm': 'confirmed a new club as coordinator',
+  'club_request.decline': 'declined to coordinate a new club',
+  'club_request.approve': 'approved a new club',
+  'club_request.reject': 'rejected a new club',
   'event.hot': 'changed an event\'s "hot" flag',
   'demo.reset': 'reset the demo data',
 }

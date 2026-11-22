@@ -69,9 +69,9 @@ Owners, editors and faculty coordinators are the club's *team*: they post events
 - **Real club data** — the 102 clubs from the DSW's audit; each year's audit (category, marks, remarks) is kept per academic year and visible only to the DSW (DSW Console → Evaluations). Coordinators named in the audit become their club's faculty coordinator when they sign in with their verified college account
 - **Club profiles** — the club's team edits its short name, description, tags (or leaves it "Not categorized"), colour and social links
 - **For You** — upcoming events ranked on the server by interests, clubs you're in, closing deadlines and popularity
-- **DSW console** — review requests, see and end club teams, assign faculty, switch account types, read the activity log
+- **DSW console** — review requests, see and end club teams, assign faculty, switch account types, deactivate or reactivate accounts, read the activity log
 - **Platform console** — the tech team appoints DSW accounts
-- **Verified sign-in** — "Sign in with Microsoft" (MUJ accounts; name from the university directory) or sign-up with a code emailed to the college address; one account per email, and the domain makes it a student or faculty account. Password logins take a second step (an emailed code or an authenticator app), remembered per browser for 30 days. Microsoft accounts can add a password (e.g. to keep access as alumni)
+- **Verified sign-in** — "Sign in with Microsoft" (MUJ accounts; name from the university directory) or sign-up with a code emailed to the college address; one account per email, and the domain makes it a student or faculty account. Password logins take a second step (an emailed code or an authenticator app), remembered per browser for 30 days; 5 wrong passwords lock password login for 15 minutes. Microsoft accounts can add a password (e.g. to keep access as alumni)
 
 ---
 

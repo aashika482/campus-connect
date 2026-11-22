@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useAuthStore } from '@/context/authStore'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useEventsWhere, useUserEvents } from '@/hooks/useData'
-import { getEventColor, splitTags, getTimeAgo, teamClubs, initialOf, ALL_TAGS, TAG_COLORS, ROLE_LABELS, ACCOUNT_LABELS } from '@/types'
+import { getEventColor, splitTags, getTimeAgo, teamClubs, initialOf, ALL_TAGS, TAG_COLORS, ROLE_LABELS, ACCOUNT_LABELS, safeUrl } from '@/types'
 import type { Event, Discussion, Club } from '@/types'
 import { eventsApi, clubsApi, discussionsApi, usersApi, apiError } from '@/api/client'
 import { ImageUpload } from '@/components/ui/ImageUpload'
@@ -41,7 +41,7 @@ export function SavedPage({ onViewEvent }: { onViewEvent: (ev: Event) => void })
             {savedEvents.map(ev => (
               <div key={ev.id} className="pcard au" onClick={() => onViewEvent(ev)}>
                 {ev.poster_url
-                  ? <img src={ev.poster_url} alt={ev.title} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                  ? <img src={safeUrl(ev.poster_url)} alt={ev.title} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                   : <div style={{ width: '100%', height: '100%', background: `linear-gradient(155deg, ${getEventColor(ev)}22 0%, var(--dark2) 65%)` }} />
                 }
                 <div className="pcard-grad" />

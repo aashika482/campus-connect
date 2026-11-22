@@ -363,6 +363,11 @@ export const canModerate = (user: User | null, clubId: number): boolean =>
   user?.account_type === 'dsw' || canManage(user, clubId)
 
 // ── UI helpers ───────────────────────────────────────────
+// A link or image address we're willing to use: http(s) only (a javascript:/data: one would run code).
+// The server already refuses anything else; this guards older rows and anything that slips past.
+export const safeUrl = (url: string | null | undefined): string | undefined =>
+  url && /^https?:\/\//i.test(url.trim()) ? url.trim() : undefined
+
 export const TAG_COLORS: Record<string, string> = {
   hackathon: '#D4561A', tech: '#3B82F6', coding: '#06B6D4',
   music: '#EF4444',     dance: '#F59E0B', photography: '#E879F9',

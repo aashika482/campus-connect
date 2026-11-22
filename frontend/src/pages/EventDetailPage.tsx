@@ -4,7 +4,7 @@ import { eventsApi, discussionsApi, adminApi, apiError } from '@/api/client'
 import { useUserEvents } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
-import { splitTags, getEventColor, getTimeAgo, canModerate, initialOf, TAG_COLORS } from '@/types'
+import { splitTags, getEventColor, getTimeAgo, canModerate, initialOf, TAG_COLORS, safeUrl } from '@/types'
 import type { Event, Discussion, User } from '@/types'
 
 const PAGE_SIZE = 10
@@ -421,7 +421,7 @@ export function EventDetailPage() {
               }}>
                 {event.poster_url ? (
                   <img
-                    src={event.poster_url}
+                    src={safeUrl(event.poster_url)}
                     alt={event.title}
                     style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}

@@ -179,6 +179,7 @@ export const adminApi = {
                    api.patch(`/admin/dsw/club-roles/${id}`, { action, multi_club_exception: multiClubException }),
   assignFaculty: (clubId: number, email: string) => api.post(`/admin/dsw/clubs/${clubId}/faculty`, { email }),
   accounts:      (params?: object) => api.get('/admin/dsw/accounts', { params }),     // { q, account_type }
+  setActive:     (userId: number, isActive: boolean) => api.patch(`/admin/dsw/accounts/${userId}/active`, { is_active: isActive }),
   setAccountType: (userId: number, accountType: 'student' | 'faculty' | 'alumni') =>
                    api.patch(`/admin/dsw/accounts/${userId}`, { account_type: accountType }),
   setHot:        (eventId: number, isHot: boolean) => api.patch(`/admin/dsw/events/${eventId}/hot`, { is_hot: isHot }),

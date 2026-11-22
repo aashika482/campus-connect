@@ -9,7 +9,7 @@ import { useToastStore } from '@/context/toastStore'
 import { getTimeAgo } from '@/types'
 import type { ChatMessage } from '@/types'
 
-type Status = 'connecting' | 'live' | 'offline'
+type Status = 'connecting' | 'live' | 'offline' | 'denied'
 
 export function ClubChat({ clubId, canModerate }: { clubId: number; canModerate: boolean }) {
   const { user } = useAuthStore()
@@ -58,8 +58,8 @@ export function ClubChat({ clubId, canModerate }: { clubId: number; canModerate:
       ws.onclose = e => {
         window.clearInterval(ping)
         if (stopped) return
+        if (e.code === 4403) { setStatus('denied'); return }   // not on the working team any more
         setStatus('offline')
-        if (e.code === 4403) return   // not on the working team any more
         // Refresh the sign-in (the request does it if the token expired), then try again
         retry = window.setTimeout(() => { usersApi.me().catch(() => {}).finally(() => !stopped && connect()) }, 3000)
       }
@@ -120,7 +120,10 @@ export function ClubChat({ clubId, canModerate }: { clubId: number; canModerate:
   }
 
   const small: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }
-  const dot = { live: '#22C55E', connecting: '#EAB308', offline: '#EF4444' }[status]
+  const dot = { live: '#22C55E', connecting: '#EAB308', offline: '#EF4444', denied: 'var(--gray2)' }[status]
+  if (status === 'denied') {
+    return <div style={{ ...small, maxWidth: 720 }}>You're no longer on this club's working team, so the chat is closed to you.</div>
+  }
   return (
     <div style={{ maxWidth: 720, border: '1px solid var(--dark3)', borderRadius: 12, background: 'var(--dark2)', overflow: 'hidden' }}>
       <div style={{ ...small, display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', borderBottom: '1px solid var(--dark3)' }}>
