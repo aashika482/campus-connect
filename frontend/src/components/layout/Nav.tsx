@@ -31,6 +31,7 @@ export function workspaces(user: User | null): Workspace[] {
   if (user.account_type === 'dsw') list.push({ path: '/dsw', nav: 'DSW', label: 'DSW Console', badge: 'DSW' })
   if (user.account_type === 'platform_admin') list.push({ path: '/platform', nav: 'Platform', label: 'Platform Console', badge: 'Tech' })
   if (teamClubs(user).length > 0) list.push({ path: '/admin', nav: 'Dashboard', label: 'Club Dashboard', badge: 'Team' })
+  if (user.account_type === 'faculty') list.push({ path: '/club-requests', nav: 'Requests', label: 'Club Requests', badge: 'Faculty' })
   return list
 }
 
@@ -88,7 +89,9 @@ export function Nav({ onViewEvent, onViewClub }: Props) {
     setShowNotif(false)
     if (n.event_id) navigate(`/events/${n.event_id}#discussion`)
     else if (n.kind === 'app_review') navigate(`/admin?club=${n.club_id}&tab=applications`)
-    else if (n.club_id) navigate(`/clubs/${n.club_id}${n.kind === 'application' ? '' : '#announcements'}`)
+    else if (n.kind === 'club_request' && !n.club_id)
+      navigate(user?.account_type === 'faculty' ? '/club-requests' : user?.account_type === 'dsw' ? '/dsw?tab=clubs' : '/clubs/new')
+    else if (n.club_id) navigate(`/clubs/${n.club_id}${n.kind.startsWith('ann') ? '#announcements' : ''}`)
   }
 
   return (

@@ -1269,7 +1269,7 @@ export function AdminPage() {
 function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => void }) {
   const { toast } = useToastStore()
   const [form, setForm] = useState({
-    recruiting: club.recruiting, working_multi_club: club.working_multi_club,
+    is_private: club.is_private, recruiting: club.recruiting, working_multi_club: club.working_multi_club,
     fee_member: String(club.fee_member), fee_working: String(club.fee_working),
   })
   const [saving, setSaving] = useState(false)
@@ -1293,7 +1293,7 @@ function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => voi
   const row: React.CSSProperties = { display: 'flex', gap: 14, alignItems: 'flex-start', padding: '18px 0', borderBottom: '1px solid var(--dark3)' }
   const hint: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--gray2)', marginTop: 4, lineHeight: 1.6 }
   const label: React.CSSProperties = { fontFamily: 'var(--head)', fontSize: 14, fontWeight: 600 }
-  const toggle = (k: 'recruiting' | 'working_multi_club', title: string, help: string) => (
+  const toggle = (k: 'is_private' | 'recruiting' | 'working_multi_club', title: string, help: string) => (
     <label style={{ ...row, cursor: 'pointer' }}>
       <input type="checkbox" checked={form[k]} onChange={e => set(k, e.target.checked)} style={{ marginTop: 3, accentColor: 'var(--orange)' }} />
       <div><div style={label}>{title}</div><div style={hint}>{help}</div></div>
@@ -1311,6 +1311,8 @@ function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => voi
 
   return (
     <div style={{ maxWidth: 640 }}>
+      {toggle('is_private', 'Private club',
+        'Hidden from club listings and search for outsiders, who also stop seeing your upcoming events and can\'t join. Your page and past events stay visible; members see everything as usual.')}
       {toggle('recruiting', 'Recruiting', 'Members can apply to the working team. Turn it off outside hiring season; last year\'s working members can still renew.')}
       {toggle('working_multi_club', 'Working members may work for other clubs too',
         'Off: your working members can\'t be on another club\'s working team, and people on one can\'t join yours.')}

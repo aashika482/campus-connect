@@ -35,13 +35,17 @@ CLUBS_DATA = [
 
 async def seed():
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select, func
+        from sqlalchemy import select, func, text
         if (await db.execute(select(func.count()).select_from(Club))).scalar() > 0:
             print("OK: clubs already seeded, skipping.")
             return
         print("Seeding clubs...")
         for c in CLUBS_DATA:
             db.add(Club(**c))
+        await db.flush()
+        # The rows came with their own ids: move the id sequence past them, or the next club
+        # created in the app would be given id 1 again
+        await db.execute(text("SELECT setval(pg_get_serial_sequence('clubs', 'id'), (SELECT MAX(id) FROM clubs))"))
         await db.commit()
         print(f"OK: seeded {len(CLUBS_DATA)} clubs. For demo users and events: python -m app.db.demo")
 

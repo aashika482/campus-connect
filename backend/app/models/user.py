@@ -71,6 +71,15 @@ class User(Base):
     def is_member_of(self, club_id: int) -> bool:
         return any(r.club_id == club_id for r in self.roles(ClubRoleKind.member))
 
+    @property
+    def club_ids(self) -> set[int]:
+        """Clubs this user is in this academic year, in any role."""
+        return {r.club_id for r in self.roles()}
+
+    def sees_inside(self, club_id: int) -> bool:
+        """Sees a private club as usual: anyone in it, or the DSW."""
+        return self.account_type == AccountType.dsw or club_id in self.club_ids
+
     def is_working_member_of(self, club_id: int) -> bool:
         return any(r.club_id == club_id for r in self.roles(ClubRoleKind.working_member))
 

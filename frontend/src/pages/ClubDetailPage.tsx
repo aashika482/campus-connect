@@ -5,7 +5,7 @@ import { useUserClubs, useEventsWhere } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
 import { splitTags, TAG_COLORS, getEventColor, canManage, onWorkingTeam, activeRoles, getTimeAgo, ROLE_LABELS, REACTIONS } from '@/types'
-import type { Club, Event, MyApplication, Roster, Announcement, Reaction } from '@/types'
+import type { Club, Event, MyApplication, Roster, Announcement, Reaction, Benefit, MyLeaveRequest, LeaveScope } from '@/types'
 
 // ── Icons ─────────────────────────────────────────────────
 const lp = { fill: 'none', stroke: 'currentColor', strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
@@ -118,6 +118,9 @@ export function ClubDetailPage() {
                 </div>
 
                 {/* Status badge */}
+                {club.is_private && (
+                  <span style={{ fontSize: 10, fontFamily: 'var(--mono)', color: '#A855F7', border: '1px solid rgba(168,85,247,0.35)', padding: '3px 10px', background: 'rgba(168,85,247,0.06)', letterSpacing: 0.5 }}>Private</span>
+                )}
                 {club.is_open
                   ? <span style={{ fontSize: 10, fontFamily: 'var(--mono)', color: '#10B981', border: '1px solid rgba(16,185,129,0.3)', padding: '3px 10px', background: 'rgba(16,185,129,0.06)', letterSpacing: 0.5 }}>● Open</span>
                   : <span style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--gray2)', border: '1px solid var(--dark4)', padding: '3px 10px', letterSpacing: 0.5 }}>Closed</span>
@@ -127,7 +130,7 @@ export function ClubDetailPage() {
                 <div style={{ width: 1, height: 20, background: 'var(--dark4)' }} />
 
                 {/* Join button (students; there's no leaving from the app) */}
-                {(isMember || canJoin) && <button
+                {(isMember || (canJoin && !club.is_private)) && <button
                   onClick={() => join(club, n => setClub(c => (c ? { ...c, member_count: n } : c)))}
                   disabled={isMember}
                   style={{
@@ -167,11 +170,17 @@ export function ClubDetailPage() {
               <div style={{ marginTop: 14, fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--gray2)', lineHeight: 1.7 }}>
                 {membership?.expires_on
                   ? <>Your membership runs until {fmtDay(membership.expires_on)}.</>
-                  : <>Membership ₹{club.fee_member} a year · working team ₹{club.fee_working} a year, paid to the club.</>}
+                  : club.is_private
+                    ? <>This club is private and isn't taking members right now.</>
+                    : <>Membership ₹{club.fee_member} a year · working team ₹{club.fee_working} a year, paid to the club.</>}
               </div>
 
               {isMember && !isWorking && user?.account_type === 'student' && (
                 <WorkingTeamApplication club={club} />
+              )}
+
+              {isMember && user?.account_type === 'student' && (
+                <LeaveRequestLink clubId={clubId} clubName={club.name} isWorking={isWorking} />
               )}
 
               {canManage(user, clubId)
@@ -224,6 +233,9 @@ export function ClubDetailPage() {
           <ClubAnnouncements clubId={clubId} canPost={canManage(user, clubId)} />
         </div>
       )}
+
+      {/* ── Member benefits ─────────────────────────────────── */}
+      <ClubBenefits clubId={clubId} canEdit={canManage(user, clubId)} />
 
       {/* ── Members ─────────────────────────────────────────── */}
       {user && (
@@ -298,6 +310,123 @@ function WorkingTeamApplication({ club }: { club: Club }) {
     return <div style={note}>{APPLICATION_TEXT[mine.status]}{mine.status === 'declined' && mine.reason ? ` ${mine.reason}.` : ''}</div>
   }
   return club.recruiting && mine.reason ? <div style={note}>{club.name} is recruiting, but: {mine.reason}.</div> : null
+}
+
+// ── Member benefits: public; the club's team adds and removes them ─
+function ClubBenefits({ clubId, canEdit }: { clubId: number; canEdit: boolean }) {
+  const { toast } = useToastStore()
+  const [items, setItems] = useState<Benefit[]>([])
+  const [form, setForm] = useState({ title: '', details: '', audience: 'members', valid_until: '' })
+  const [adding, setAdding] = useState(false)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { clubsApi.benefits(clubId).then(r => setItems(r.data)).catch(() => {}) }, [clubId])
+
+  const add = async () => {
+    setSaving(true)
+    try {
+      const r = await clubsApi.addBenefit(clubId, { ...form, details: form.details || null, valid_until: form.valid_until || null })
+      setItems(p => [...p, r.data])
+      setForm({ title: '', details: '', audience: 'members', valid_until: '' })
+      setAdding(false)
+    } catch (err) { toast(apiError(err, 'Could not add the benefit'), 'error') }
+    finally { setSaving(false) }
+  }
+  const remove = async (b: Benefit) => {
+    try {
+      await clubsApi.removeBenefit(clubId, b.id)
+      setItems(p => p.filter(x => x.id !== b.id))
+    } catch (err) { toast(apiError(err, 'Could not remove it'), 'error') }
+  }
+
+  if (items.length === 0 && !canEdit) return null
+  const small: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }
+  return (
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 40px 40px' }}>
+      <SectionTitle kicker="Why join" title="Member benefits" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+        {items.map(b => (
+          <div key={b.id} style={{ padding: '14px 16px', border: '1px solid var(--dark3)', borderRadius: 10, background: 'var(--dark2)' }}>
+            <div style={{ ...small, color: b.audience === 'working' ? '#22C55E' : 'var(--orange)', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6 }}>
+              {b.audience === 'working' ? 'Working team' : 'All members'}
+            </div>
+            <div style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 600 }}>{b.title}</div>
+            {b.details && <div style={{ fontFamily: 'var(--body)', fontSize: 12.5, color: 'var(--cream3)', marginTop: 4, lineHeight: 1.5 }}>{b.details}</div>}
+            <div style={{ ...small, marginTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+              <span>{b.valid_until ? `Until ${fmtDay(b.valid_until)}` : ''}</span>
+              {canEdit && <button onClick={() => remove(b)} style={{ ...small, textDecoration: 'underline' }}>Remove</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+      {items.length === 0 && <div style={small}>No benefits listed yet. Add perks members get, like discounts or early access.</div>}
+      {canEdit && (adding ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14 }}>
+          <input className="inp" value={form.title} maxLength={80} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+            placeholder="e.g. 10% off fest passes" style={{ width: 220, fontSize: 12 }} />
+          <input className="inp" value={form.details} maxLength={300} onChange={e => setForm(f => ({ ...f, details: e.target.value }))}
+            placeholder="Details (optional)" style={{ width: 240, fontSize: 12 }} />
+          <select className="inp" value={form.audience} onChange={e => setForm(f => ({ ...f, audience: e.target.value }))} style={{ width: 'auto', fontSize: 12 }}>
+            <option value="members">All members</option>
+            <option value="working">Working team only</option>
+          </select>
+          <input className="inp" type="date" value={form.valid_until} onChange={e => setForm(f => ({ ...f, valid_until: e.target.value }))}
+            title="Valid until (optional)" style={{ width: 'auto', fontSize: 12 }} />
+          <button className="btn-p" disabled={saving || !form.title.trim()} onClick={add} style={{ padding: '9px 16px', fontSize: 10 }}>{saving ? 'Adding…' : 'Add'}</button>
+          <button className="btn-g" onClick={() => setAdding(false)} style={{ padding: '9px 14px', fontSize: 10 }}>Cancel</button>
+        </div>
+      ) : (
+        <button className="btn-g" onClick={() => setAdding(true)} style={{ marginTop: 14, padding: '9px 16px', fontSize: 10 }}>+ Add a benefit</button>
+      ))}
+    </div>
+  )
+}
+
+// ── Asking the DSW to leave the working team, or the club ─
+function LeaveRequestLink({ clubId, clubName, isWorking }: { clubId: number; clubName: string; isWorking: boolean }) {
+  const { toast } = useToastStore()
+  const [mine, setMine] = useState<MyLeaveRequest | null>(null)
+  const [open, setOpen] = useState(false)
+  const [scope, setScope] = useState<LeaveScope>(isWorking ? 'working_team' : 'club')
+  const [reason, setReason] = useState('')
+  const [sending, setSending] = useState(false)
+  useEffect(() => { clubsApi.myLeave(clubId).then(r => setMine(r.data)).catch(() => {}) }, [clubId])
+
+  const send = async () => {
+    setSending(true)
+    try {
+      const r = await clubsApi.leave(clubId, scope, reason.trim())
+      setMine(r.data); setOpen(false)
+      toast('Request sent to the DSW', 'success')
+    } catch (err) { toast(apiError(err, 'Could not send the request'), 'error') }
+    finally { setSending(false) }
+  }
+
+  const note: React.CSSProperties = { marginTop: 10, fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--gray2)', lineHeight: 1.6 }
+  if (mine?.status === 'pending') {
+    return <div style={note}>Your request to leave {mine.scope === 'working_team' ? `${clubName}'s working team` : clubName} is waiting for the DSW.</div>
+  }
+  if (!open) {
+    return (
+      <div style={note}>
+        <button onClick={() => setOpen(true)} style={{ ...note, marginTop: 0, textDecoration: 'underline', textUnderlineOffset: 3 }}>
+          Want to leave? Ask the DSW
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      {isWorking && (
+        <select className="inp" value={scope} onChange={e => setScope(e.target.value as LeaveScope)} style={{ width: 'auto', fontSize: 12 }}>
+          <option value="working_team">Leave the working team (stay a member)</option>
+          <option value="club">Leave the club</option>
+        </select>
+      )}
+      <input className="inp" value={reason} maxLength={300} onChange={e => setReason(e.target.value)} placeholder="Reason (optional)" style={{ width: 240, fontSize: 12 }} />
+      <button className="btn-p" disabled={sending} onClick={send} style={{ padding: '9px 16px', fontSize: 10, letterSpacing: 1.5 }}>{sending ? 'Sending…' : 'Send to DSW'}</button>
+      <button className="btn-g" onClick={() => setOpen(false)} style={{ padding: '9px 14px', fontSize: 10 }}>Cancel</button>
+    </div>
+  )
 }
 
 // ── Roster: names for everyone, details for the working team ─

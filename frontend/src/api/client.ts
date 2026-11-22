@@ -86,6 +86,7 @@ export const authApi = {
 export const eventsApi = {
   list:               (params?: object)          => api.get('/events', { params }),   // paginated: { items, total }
   get:                (id: number)               => api.get(`/events/${id}`),
+  forYou:             (limit = 6)                => api.get('/events/for-you', { params: { limit } }),   // ranked for the user
   create:             (data: object)             => api.post('/events', data),
   update:             (id: number, data: object) => api.patch(`/events/${id}`, data),
   delete:             (id: number)               => api.delete(`/events/${id}`),
@@ -117,6 +118,22 @@ export const clubsApi = {
   roster:        (id: number) => api.get(`/clubs/${id}/roster`),          // { detailed, items }
   myApplication: (id: number) => api.get(`/clubs/${id}/application`),
   apply:         (id: number) => api.post(`/clubs/${id}/application`),
+  benefits:      (id: number) => api.get(`/clubs/${id}/benefits`),
+  addBenefit:    (id: number, data: object) => api.post(`/clubs/${id}/benefits`, data),       // the club's team
+  removeBenefit: (id: number, benefitId: number) => api.delete(`/clubs/${id}/benefits/${benefitId}`),
+  myLeave:       (id: number) => api.get(`/clubs/${id}/leave`),
+  leave:         (id: number, scope: 'working_team' | 'club', reason?: string) =>
+                   api.post(`/clubs/${id}/leave`, { scope, reason: reason || null }),
+}
+
+// ── New club requests ────────────────────────────────────
+export const clubRequestsApi = {
+  submit: (data: object) => api.post('/club-requests', data),             // a student
+  mine:   ()             => api.get('/club-requests/mine'),
+  forMe:  ()             => api.get('/club-requests/for-me'),             // faculty: requests naming them
+  queue:  (params?: object) => api.get('/club-requests', { params }),     // the DSW: { items, total }
+  decide: (id: number, action: 'confirm' | 'decline' | 'approve' | 'reject', note?: string) =>
+            api.patch(`/club-requests/${id}`, { action, note: note || null }),   // → { club_id, skipped }
 }
 
 // ── Club announcements (the club's working team) ─────────
@@ -151,6 +168,8 @@ export const adminApi = {
   grantDsw:      (email: string) => api.post('/admin/platform/dsw-accounts', { email }),
   removeDsw:     (userId: number) => api.delete(`/admin/platform/dsw-accounts/${userId}`),
   auditLog:      (params?: object) => api.get('/admin/audit-log', { params }),
+  leaveRequests: (params?: object) => api.get('/admin/dsw/leave-requests', { params }),   // { status }
+  decideLeave:   (id: number, action: 'approve' | 'reject') => api.patch(`/admin/dsw/leave-requests/${id}`, { action }),
 }
 
 // ── Discussions ──────────────────────────────────────────

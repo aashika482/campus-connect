@@ -1,19 +1,21 @@
 // Governance consoles:
-//  - DswPage (/dsw): the DSW office. Reviews club team requests, sees and ends active
-//    team roles, assigns faculty coordinators, switches account types, reads the activity log
+//  - DswPage (/dsw): the DSW office. Reviews club team requests and leave requests, sees and ends
+//    active team roles, assigns faculty coordinators, makes clubs private, switches account types,
+//    reads the activity log
 //  - PlatformPage (/platform): the tech team. Grants and removes DSW accounts, reads the log
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { adminApi, apiError } from '@/api/client'
+import { adminApi, clubsApi, apiError } from '@/api/client'
 import { fetchAllClubRoles, useDebounced, usePaged } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
 import { TabBar, LoadMore } from '@/components/ui/ListControls'
 import { ClubSelect } from '@/components/ui/ClubSelect'
 import { PeopleTable, Empty, roleColumns, fmtDate } from './AdminPeople'
+import { DswClubRequests } from './ClubRequests'
 import type { Column } from './AdminPeople'
 import { ACCOUNT_LABELS } from '@/types'
-import type { Account, AccountType, AuditEntry, ClubRoleDetail } from '@/types'
+import type { Account, AccountType, AuditEntry, ClubRoleDetail, LeaveRequest, Club } from '@/types'
 
 const btn = (color: string): React.CSSProperties => ({
   padding: '4px 10px', fontSize: 10, fontFamily: 'var(--mono)', color, border: `1px solid ${color}55`, borderRadius: 4, whiteSpace: 'nowrap',
@@ -49,6 +51,8 @@ function Console<T extends string>({ kicker, title, intro, tabs, children }: {
 // ── DSW Console ───────────────────────────────────────────
 const DSW_TABS = [
   { id: 'requests', label: 'Requests' },
+  { id: 'clubs',    label: 'New clubs' },
+  { id: 'leaving',  label: 'Leave requests' },
   { id: 'teams',    label: 'Club teams' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'activity', label: 'Activity' },
@@ -61,7 +65,9 @@ export function DswPage() {
     <Console kicker="Dean of Student Welfare" title="DSW Console" tabs={DSW_TABS}
       intro="Everything that needs approval comes here. Only approved team members can run a club.">
       {tab => tab === 'requests' ? <RoleList status="pending" />
-        : tab === 'teams' ? <><AssignFaculty /><RoleList status="active" /></>
+        : tab === 'clubs' ? <DswClubRequests />
+        : tab === 'leaving' ? <LeaveRequests />
+        : tab === 'teams' ? <><AssignFaculty /><ClubPrivacy /><RoleList status="active" /></>
         : tab === 'accounts' ? <AccountsTab />
         : <ActivityTab />}
     </Console>
@@ -160,6 +166,101 @@ function AssignFaculty() {
       <input className="inp" value={email} onChange={e => setEmail(e.target.value)} placeholder="Faculty email" style={{ width: 260, fontSize: 12 }} />
       <button className="btn-p" disabled={sending || !clubId || !email.trim()} onClick={assign} style={{ padding: '10px 16px', fontSize: 10, letterSpacing: 1.5 }}>
         {sending ? 'Assigning…' : 'Assign faculty coordinator'}
+      </button>
+    </div>
+  )
+}
+
+// Students asking to leave a club's working team, or a club
+function LeaveRequests() {
+  const { toast } = useToastStore()
+  const [rows, setRows] = useState<LeaveRequest[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<number | null>(null)
+
+  useEffect(() => {
+    adminApi.leaveRequests()
+      .then(r => setRows(r.data.items))
+      .catch(err => setError(apiError(err, 'Failed to load')))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const act = async (r: LeaveRequest, action: 'approve' | 'reject') => {
+    setBusyId(r.id)
+    try {
+      await adminApi.decideLeave(r.id, action)
+      setRows(p => p.filter(x => x.id !== r.id))
+      toast(action === 'approve' ? `${r.name} has left ${r.scope === 'working_team' ? `${r.club_name}'s working team` : r.club_name}` : 'Request rejected', 'success')
+    } catch (err) {
+      toast(apiError(err, 'Failed to update'), 'error')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <PeopleTable
+      rows={rows}
+      rowKey={r => r.id}
+      academic={false}
+      loading={loading}
+      error={error}
+      dateOf={r => r.created_at}
+      dateLabel="Requested"
+      fileName="leave-requests"
+      emptyText="No one is waiting to leave a club."
+      columns={[
+        { label: 'Club', csv: r => r.club_name, cell: r => <span style={{ color: 'var(--cream)' }}>{r.club_name}</span> },
+        { label: 'Wants to leave', csv: r => r.scope, cell: r => r.scope === 'working_team' ? 'The working team (stays a member)' : 'The club' },
+        { label: 'Reason', csv: r => r.reason ?? '', cell: r => r.reason || '—' },
+        {
+          label: 'Action', csv: r => r.status,
+          cell: r => (
+            <div style={{ display: 'flex', gap: 6, opacity: busyId === r.id ? 0.5 : 1, pointerEvents: busyId === r.id ? 'none' : 'auto' }}>
+              <button onClick={() => act(r, 'approve')} style={btn('#22C55E')}>Approve</button>
+              <button onClick={() => act(r, 'reject')} style={btn('#EF4444')}>Reject</button>
+            </div>
+          ),
+        },
+      ]}
+    />
+  )
+}
+
+// Make any club private or public
+function ClubPrivacy() {
+  const { toast } = useToastStore()
+  const [clubId, setClubId] = useState('')
+  const [club, setClub] = useState<Club | null>(null)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    setClub(null)
+    if (clubId) clubsApi.get(Number(clubId)).then(r => setClub(r.data)).catch(() => {})
+  }, [clubId])
+
+  const flip = async () => {
+    if (!club) return
+    setSaving(true)
+    try {
+      const r = await clubsApi.updateSettings(club.id, { is_private: !club.is_private })
+      setClub(r.data)
+      toast(`${r.data.name} is now ${r.data.is_private ? 'private' : 'public'}`, 'success')
+    } catch (err) {
+      toast(apiError(err, 'Could not change it'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 22, padding: 16, border: '1px solid var(--dark3)', borderRadius: 12, background: 'var(--dark2)' }}>
+      <div style={{ width: 280 }}><ClubSelect value={clubId} onChange={setClubId} /></div>
+      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', padding: '10px 0' }}>
+        {club ? (club.is_private ? 'Private: hidden from outsiders' : 'Public') : 'Pick a club to see whether it\'s private'}
+      </span>
+      <button className="btn-g" disabled={!club || saving} onClick={flip} style={{ padding: '10px 16px', fontSize: 10, letterSpacing: 1.5 }}>
+        {club?.is_private ? 'Make public' : 'Make private'}
       </button>
     </div>
   )

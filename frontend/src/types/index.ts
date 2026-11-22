@@ -95,10 +95,65 @@ export interface Club {
   instagram?: string
   linkedin?: string
   // Team settings
+  is_private: boolean            // hidden from outsiders' listings; its upcoming events too
   recruiting: boolean            // working-team applications open
   working_multi_club: boolean    // its working members may work for other clubs too
   fee_member: number             // yearly fees, ₹ (collected outside the portal until payments exist)
   fee_working: number
+}
+
+// ── New club requests ────────────────────────────────────
+export type ClubRequestStatus = 'awaiting_coordinator' | 'awaiting_dsw' | 'approved' | 'declined' | 'rejected'
+
+export interface ClubRequest {
+  id: number
+  status: ClubRequestStatus
+  name: string
+  abbr: string
+  description: string
+  tags: string                  // comma-separated
+  instagram: string | null
+  linkedin: string | null
+  affiliation: string | null
+  purpose: string
+  plans: string
+  founding_emails: string       // comma-separated
+  coordinator_email: string
+  coordinator_signed_up: boolean
+  contact_phone: string | null  // the DSW and the requester only
+  requester_name: string
+  requester_email: string
+  decision_note: string | null
+  club_id: number | null        // set once approved
+  created_at: string
+  updated_at: string
+}
+
+// ── Member benefits ──────────────────────────────────────
+export interface Benefit {
+  id: number
+  club_id: number
+  title: string
+  details: string | null
+  audience: 'members' | 'working'
+  valid_until: string | null
+}
+
+// ── Leaving a club (the DSW approves) ────────────────────
+export type LeaveScope = 'working_team' | 'club'
+export type LeaveStatus = 'pending' | 'approved' | 'rejected'
+
+export interface MyLeaveRequest { status: LeaveStatus | null; scope: LeaveScope | null }
+
+export interface LeaveRequest extends Person {
+  id: number
+  club_id: number
+  club_name: string
+  scope: LeaveScope
+  reason: string | null
+  status: LeaveStatus
+  created_at: string
+  reviewed_at: string | null
 }
 
 // ── Working-team applications ────────────────────────────

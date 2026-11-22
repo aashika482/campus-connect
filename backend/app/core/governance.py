@@ -18,10 +18,10 @@ from sqlalchemy.orm import aliased
 
 from app.core.config import settings
 from app.models.audit import AuditLog
-from app.models.club import Club
+from app.models.club import Club, ClubRequest, ClubRequestStatus
 from app.models.membership import (
     ClubRole, ClubRoleKind, ClubRoleStatus, OPEN_STATUSES, STUDENT_TEAM_ROLES,
-    ClubApplication, ApplicationStatus, OPEN_APPLICATION_STATUSES,
+    ClubApplication, ApplicationStatus, OPEN_APPLICATION_STATUSES, LeaveRequest, LeaveScope, LeaveStatus,
 )
 from app.models.notification import Notification
 from app.models.user import User, AccountType
@@ -155,9 +155,12 @@ async def _reject_rival_owner_requests(db: AsyncSession, approved: ClubRole, dsw
                         role=r.role.value, reason="another owner was approved")
 
 
-async def end_roles(db: AsyncSession, user: User, kinds: tuple[ClubRoleKind, ...], actor: User, reason: str) -> None:
-    """End this user's active roles of these kinds (and reject pending ones), e.g. on graduation."""
-    for r in [r for status in OPEN_STATUSES for r in user.roles(*kinds, status=status)]:
+async def end_roles(db: AsyncSession, user: User, kinds: tuple[ClubRoleKind, ...], actor: User, reason: str,
+                    club_id: int | None = None) -> None:
+    """End this user's active roles of these kinds (and reject pending ones), e.g. on graduation;
+    only in one club when club_id is given."""
+    for r in [r for status in OPEN_STATUSES for r in user.roles(*kinds, status=status)
+              if club_id is None or r.club_id == club_id]:
         was_active = r.status == ClubRoleStatus.active
         r.status = ClubRoleStatus.ended if was_active else ClubRoleStatus.rejected
         r.ended_at = _now() if was_active else None
@@ -282,3 +285,106 @@ async def act_on_application(db: AsyncSession, app: ClubApplication, club: Club,
             S.accepted: f"You're on {club.name}'s working team!",
             S.declined: f"{club.name} didn't take your working-team application this time. You stay a member.",
         }[app.status], club_id=club.id)
+
+
+# ── Leaving a club (the DSW approves) ────────────────────
+LEAVABLE = {
+    LeaveScope.working_team: (ClubRoleKind.working_member,),
+    LeaveScope.club: (ClubRoleKind.member, ClubRoleKind.working_member, ClubRoleKind.owner, ClubRoleKind.editor),
+}
+
+
+def leave_block(user: User, club_id: int, scope: LeaveScope) -> str | None:
+    """Why this user can't ask to leave in this way (None: they can)."""
+    if scope == LeaveScope.working_team and not user.is_working_member_of(club_id):
+        return "You're not on this club's working team"
+    if not any(r.club_id == club_id for r in user.roles(*LEAVABLE[LeaveScope.club])):
+        return ("Faculty coordinators are assigned by the DSW; ask the DSW directly"
+                if any(r.club_id == club_id for r in user.roles(ClubRoleKind.faculty_coordinator))
+                else "You're not in this club")
+    return None
+
+
+async def review_leave(db: AsyncSession, req: LeaveRequest, leaver: User, club: Club, action: str, dsw: User) -> None:
+    """approve: end the roles the request covers (leaving the club also withdraws open applications); or reject."""
+    if req.status != LeaveStatus.pending:
+        raise HTTPException(status_code=400, detail=f"This request is already {req.status.value}")
+    if action == "approve":
+        await end_roles(db, leaver, LEAVABLE[req.scope], dsw, reason=f"leave request {req.id}", club_id=club.id)
+        if req.scope == LeaveScope.club:
+            for app in (await db.execute(select(ClubApplication).where(
+                ClubApplication.user_id == leaver.id, ClubApplication.club_id == club.id,
+                ClubApplication.status.in_(OPEN_APPLICATION_STATUSES),
+            ))).scalars().all():
+                app.status, app.decided_by = ApplicationStatus.declined, dsw.id
+    req.status = LeaveStatus.approved if action == "approve" else LeaveStatus.rejected
+    req.reviewed_by, req.reviewed_at = dsw.id, _now()
+    AuditLog.record(db, dsw, f"leave.{action}", "leave_request", req.id, club=club.name, user=leaver.email,
+                    scope=req.scope.value)
+    what = "the working team of " if req.scope == LeaveScope.working_team else ""
+    Notification.send(db, [leaver.id], "leave", (
+        f"The DSW approved your request: you've left {what}{club.name}." if action == "approve"
+        else f"The DSW didn't approve your request to leave {what}{club.name}."), club_id=club.id)
+
+
+# ── New club requests ────────────────────────────────────
+CLUB_COLORS = ("#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#8B5CF6", "#EC4899", "#06B6D4", "#F97316", "#22C55E", "#A855F7")
+
+
+def on_other_team(user: User, club_id: int | None = None) -> list[str]:
+    """Clubs where this student is owner or editor (other than club_id)."""
+    return [r.club_name for r in user.roles(*STUDENT_TEAM_ROLES) if r.club_id != club_id]
+
+
+async def approve_club_request(db: AsyncSession, req: ClubRequest, requester: User, dsw: User) -> tuple[Club, list[str]]:
+    """Create the club: the requester owns it, the coordinator is assigned, the founding team become editors
+    (each one who has a student account and isn't on another club's team, up to the editor limit).
+    Returns the club and the founding members who couldn't be added, with why."""
+    if (await db.execute(select(Club.id).where(func.lower(Club.name) == req.name.lower()))).first():
+        raise HTTPException(status_code=409, detail=f"A club named {req.name} already exists")
+    if requester.account_type != AccountType.student or not requester.is_active:
+        raise HTTPException(status_code=409, detail=f"{requester.name} is no longer an active student account")
+    if elsewhere := on_other_team(requester):
+        raise HTTPException(status_code=409, detail=f"{requester.name} already runs {', '.join(elsewhere)}. End that role first.")
+    coordinator = (await db.execute(select(User).where(User.email == req.coordinator_email))).scalar_one_or_none()
+    if coordinator is None or coordinator.account_type != AccountType.faculty:
+        raise HTTPException(status_code=409, detail="The faculty coordinator's account isn't a faculty account any more")
+
+    club = Club(name=req.name, abbr=req.abbr, description=req.description, tags=req.tags,
+                instagram=req.instagram, linkedin=req.linkedin,
+                color=CLUB_COLORS[sum(map(ord, req.name)) % len(CLUB_COLORS)])
+    db.add(club)
+    await db.flush()
+    year_end, now = membership_end(), _now()
+
+    def grant(user: User, role: ClubRoleKind, **extra) -> None:
+        db.add(ClubRole(user_id=user.id, club_id=club.id, role=role, status=ClubRoleStatus.active,
+                        proposed_by=requester.id, reviewed_by=dsw.id, reviewed_at=now, **extra))
+
+    grant(requester, ClubRoleKind.owner, title="Founder")
+    grant(requester, ClubRoleKind.member, expires_on=year_end)
+    grant(coordinator, ClubRoleKind.faculty_coordinator)
+
+    skipped: list[str] = []
+    editors = 0
+    for email in [e for e in req.founding_emails.split(",") if e and e != requester.email]:
+        founder = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        why = ("hasn't signed up yet" if founder is None
+               else "isn't a student account" if founder.account_type != AccountType.student or not founder.is_active
+               else f"already runs {', '.join(on_other_team(founder))}" if on_other_team(founder)
+               else f"the club already has {settings.MAX_EDITORS_PER_CLUB} editors" if editors >= settings.MAX_EDITORS_PER_CLUB
+               else None)
+        if why:
+            skipped.append(f"{email}: {why}")
+            continue
+        grant(founder, ClubRoleKind.editor, title="Founding member")
+        grant(founder, ClubRoleKind.member, expires_on=year_end)
+        editors += 1
+        Notification.send(db, [founder.id], "club_request", f"{club.name} is approved. You're one of its founding editors.", club_id=club.id)
+
+    req.status, req.club_id, req.reviewed_by = ClubRequestStatus.approved, club.id, dsw.id
+    AuditLog.record(db, dsw, "club_request.approve", "club_request", req.id, club=club.name,
+                    owner=requester.email, coordinator=coordinator.email, skipped=skipped or None)
+    Notification.send(db, [requester.id, coordinator.id], "club_request",
+                      f"The DSW approved {club.name}. It's live on the portal.", club_id=club.id)
+    return club, skipped

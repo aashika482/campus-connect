@@ -14,6 +14,7 @@ import { EventDetailPage } from '@/pages/EventDetailPage'
 import { ClubDetailPage }  from '@/pages/ClubDetailPage'
 import { SavedPage, ProfilePage, CalendarPage, AdminPage } from '@/pages/OtherPages'
 import { DswPage, PlatformPage } from '@/pages/GovernancePages'
+import { NewClubRequestPage, FacultyClubRequestsPage } from '@/pages/ClubRequests'
 
 import type { Event, Club } from '@/types'
 
@@ -81,6 +82,16 @@ export default function App() {
           <Route path="/clubs" element={
             <ProtectedRoute>
               <ClubsPage onViewClub={handleViewClub} />
+            </ProtectedRoute>
+          } />
+          <Route path="/clubs/new" element={
+            <ProtectedRoute>
+              <NewClubRequestPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/club-requests" element={
+            <ProtectedRoute>
+              <FacultyClubRequestsPage />
             </ProtectedRoute>
           } />
           <Route path="/clubs/:id" element={

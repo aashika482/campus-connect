@@ -5,6 +5,8 @@ from sqlalchemy import select
 from app.db.database import get_db
 from app.core.config import settings
 from app.models.user import User, AccountType
+from app.models.club import ClubRequest, ClubRequestStatus
+from app.models.notification import Notification
 from app.core.security import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
@@ -67,6 +69,16 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
         interests=",".join(payload.interests) if is_student and payload.interests else None,
     )
     db.add(user)
+    await db.flush()
+    if not is_student:
+        # Club requests that were waiting for this coordinator to join
+        waiting = (await db.execute(select(ClubRequest.name).where(
+            ClubRequest.coordinator_email == user.email,
+            ClubRequest.status == ClubRequestStatus.awaiting_coordinator,
+        ))).scalars().all()
+        for name in waiting:
+            Notification.send(db, [user.id], "club_request",
+                              f"You're named faculty coordinator of a proposed club, {name}. Please confirm or decline.")
     await db.commit()
     await db.refresh(user)
     return _make_token_response(user)

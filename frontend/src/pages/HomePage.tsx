@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react'
 import { usePagedEvents, usePagedClubs, useUserEvents } from '@/hooks/useData'
 import { useAuthStore } from '@/context/authStore'
+import { eventsApi } from '@/api/client'
 import { splitTags, getEventColor } from '@/types'
 import type { Event } from '@/types'
 
@@ -15,14 +17,15 @@ export function HomePage({ onViewEvent }: Props) {
   const allEvents = usePagedEvents({}, 1)                                           // only its total is used
   const allClubs  = usePagedClubs({}, 1)                                            // only its total is used
   const hotQ      = usePagedEvents({ hot: true }, 12)
-  const forYouQ   = usePagedEvents(userTags.length > 0 ? { tags: userTags.join(',') } : {}, 6)
+  // Ranked on the server: interests, clubs you're in, closing deadlines, popularity
+  const [forYou, setForYou] = useState<Event[] | null>(null)
+  useEffect(() => { eventsApi.forYou(6).then(r => setForYou(r.data)).catch(() => setForYou([])) }, [user?.id])
   const upcomingQ = usePagedEvents({ upcoming: true }, 4)                           // soonest first
 
   const hot      = hotQ.events
-  const forYou   = forYouQ.events
   const upcoming = upcomingQ.events
 
-  if ([allEvents, allClubs, hotQ, forYouQ, upcomingQ].some(x => x.loading)) return <PageLoader />
+  if ([allEvents, allClubs, hotQ, upcomingQ].some(x => x.loading) || forYou === null) return <PageLoader />
 
   return (
     <div style={{ background: 'var(--bg)', minHeight: '100vh' }}>
@@ -61,7 +64,7 @@ export function HomePage({ onViewEvent }: Props) {
         )}
 
         {/* For You */}
-        <Section title="For You" sub={userTags.length > 0 ? `Based on your interests` : "Explore what's on"}>
+        <Section title="For You" sub={user ? (userTags.length > 0 ? 'Picked from your interests and clubs' : 'Picked from your clubs and what\'s popular') : "Popular and closing soon"}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 16 }}>
             {forYou.map(ev => (
               <EventCard key={ev.id} ev={ev} onView={onViewEvent} onSave={toggleSave} isSaved={saved.includes(ev.id)} isRegistered={registered.includes(ev.id)} />

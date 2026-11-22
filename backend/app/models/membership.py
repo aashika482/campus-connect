@@ -157,3 +157,34 @@ class SavedEvent(Base):
 
     user:  Mapped["User"]  = relationship("User",  back_populates="saved_events")
     event: Mapped["Event"] = relationship("Event", back_populates="saved_by")
+
+
+class LeaveScope(str, enum.Enum):
+    working_team = "working_team"   # stop being a working member; stay a member
+    club = "club"                   # leave the club: every role in it ends (kept as history)
+
+
+class LeaveStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class LeaveRequest(Base):
+    """A student asking the DSW to let them leave a club's working team, or the club."""
+    __tablename__ = "leave_requests"
+    __table_args__ = (
+        Index("uq_leave_requests_pending", "user_id", "club_id", unique=True,
+              postgresql_where=text("status = 'pending'")),
+    )
+
+    id:          Mapped[int]         = mapped_column(primary_key=True)
+    user_id:     Mapped[int]         = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    club_id:     Mapped[int]         = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), index=True)
+    scope:       Mapped[LeaveScope]  = mapped_column(Enum(LeaveScope, native_enum=False, length=20))
+    reason:      Mapped[str | None]  = mapped_column(String(300), nullable=True)
+    status:      Mapped[LeaveStatus] = mapped_column(Enum(LeaveStatus, native_enum=False, length=20),
+                                                     default=LeaveStatus.pending, index=True)
+    reviewed_by: Mapped[int | None]  = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at:  Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

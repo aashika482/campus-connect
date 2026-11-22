@@ -10,6 +10,7 @@ from app.models.user import User, AccountType
 from sqlalchemy import select
 
 bearer_scheme = HTTPBearer()
+optional_bearer = HTTPBearer(auto_error=False)
 
 M = TypeVar("M")
 
@@ -34,6 +35,18 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """The signed-in user on pages anyone may see (None when signed out). A bad or expired
+    token is still a 401, so the frontend refreshes it instead of quietly showing the public view."""
+    if credentials is None:
+        return None
+    user = await get_current_user(credentials, db)
+    return user if user.is_active else None
 
 
 async def get_current_active_user(user: User = Depends(get_current_user)) -> User:

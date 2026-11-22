@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from typing import Optional, List, Annotated, Generic, Literal, TypeVar
 from datetime import date, datetime
 
-from app.models.membership import ClubRoleKind, ClubRoleStatus, ApplicationStatus
+from app.models.membership import ClubRoleKind, ClubRoleStatus, ApplicationStatus, LeaveScope, LeaveStatus
 from app.models.user import AccountType
 from app.schemas.user import LowerEmail
 
@@ -27,6 +27,7 @@ class ClubOut(BaseModel):
     is_open: bool
     instagram: Optional[str] = None
     linkedin: Optional[str] = None
+    is_private: bool = False
     recruiting: bool = False
     working_multi_club: bool = False
     fee_member: int = 500
@@ -39,7 +40,8 @@ ClubPage = Page[ClubOut]
 
 
 class ClubSettingsUpdate(BaseModel):
-    """The club team's settings. Only the fields sent are changed."""
+    """The club team's settings. Only the fields sent are changed. (The DSW may change is_private only.)"""
+    is_private: Optional[bool] = None
     recruiting: Optional[bool] = None
     working_multi_club: Optional[bool] = None
     fee_member: Optional[Annotated[int, Field(ge=0, le=100000)]] = None
@@ -217,6 +219,108 @@ class MyApplication(BaseModel):
 class ApplicationAction(BaseModel):
     """Owner/editors: shortlist, recommend or decline. Faculty coordinator: approve or decline a recommendation."""
     action: Literal["shortlist", "recommend", "approve", "decline"]
+
+
+# ── New club requests ────────────────────────────────────
+Text3000 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3000)]
+
+
+class ClubRequestIn(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=150)]
+    abbr: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
+    description: Text3000
+    tags: Annotated[List[str], Field(min_length=1, max_length=4)]
+    instagram: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
+    linkedin: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
+    affiliation: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]] = None
+    purpose: Text3000
+    plans: Text3000
+    founding_emails: Annotated[List[LowerEmail], Field(min_length=2, max_length=4)]
+    coordinator_email: LowerEmail
+    contact_phone: Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=20)]
+
+
+class ClubRequestOut(BaseModel):
+    id: int
+    status: str
+    name: str
+    abbr: str
+    description: str
+    tags: str
+    instagram: Optional[str] = None
+    linkedin: Optional[str] = None
+    affiliation: Optional[str] = None
+    purpose: str
+    plans: str
+    founding_emails: str
+    coordinator_email: str
+    coordinator_signed_up: bool = False      # false: waiting for them to join the portal
+    contact_phone: Optional[str] = None      # the DSW (and the requester) only
+    requester_name: str
+    requester_email: str
+    decision_note: Optional[str] = None
+    club_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+ClubRequestPage = Page[ClubRequestOut]
+
+
+class ClubRequestDecision(BaseModel):
+    action: Literal["confirm", "decline", "approve", "reject"]
+    note: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]] = None
+
+
+class ClubRequestResult(BaseModel):
+    """After the DSW approves: the new club and anyone from the founding team who couldn't be made an editor."""
+    club_id: Optional[int] = None
+    skipped: List[str] = []
+
+
+# ── Member benefits ──────────────────────────────────────
+class BenefitIn(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+    details: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]] = None
+    audience: Literal["members", "working"] = "members"
+    valid_until: Optional[date] = None
+
+
+class BenefitOut(BenefitIn):
+    id: int
+    club_id: int
+
+    model_config = {"from_attributes": True}
+
+
+# ── Leaving a club (the DSW approves) ────────────────────
+class LeaveIn(BaseModel):
+    scope: LeaveScope
+    reason: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]] = None
+
+
+class MyLeaveRequest(BaseModel):
+    """The signed-in user's latest leave request for this club (status null: none)."""
+    status: Optional[LeaveStatus] = None
+    scope: Optional[LeaveScope] = None
+
+
+class LeaveRequestOut(PersonOut):
+    id: int
+    club_id: int
+    club_name: str
+    scope: LeaveScope
+    reason: Optional[str] = None
+    status: LeaveStatus
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+
+
+LeaveRequestPage = Page[LeaveRequestOut]
+
+
+class LeaveReview(BaseModel):
+    action: Literal["approve", "reject"]
 
 
 # ── Roster ───────────────────────────────────────────────

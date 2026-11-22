@@ -60,7 +60,12 @@ Owners, editors and faculty coordinators are the club's *team*: they post events
 - **Working teams** — while a club is recruiting, members apply; the owner/editors shortlist and recommend after an offline interview, the faculty coordinator approves. Last year's working members renew the same way. A club decides whether its working members may also work for other clubs
 - **Club roster** — everyone sees this year's member names; the working team also sees course, interests and roles (never contact details)
 - **Announcements** — the club's team posts updates for its working team, who react and comment
-- **Club settings** — recruiting on/off, the multi-club rule, and the yearly fees (default ₹500 member / ₹1000 working)
+- **Club settings** — private/public, recruiting on/off, the multi-club rule, and the yearly fees (default ₹500 member / ₹1000 working)
+- **Private clubs** — hidden from outsiders' listings and search, along with their upcoming events; the page and past events stay viewable. The club's team or the DSW switches it
+- **Leaving a club** — members ask the DSW to leave the working team (staying a member) or the club; the DSW approves or rejects
+- **Member benefits** — perks a club lists for all members or only its working team, shown on the club page
+- **New club requests** — students propose a club (with a founding team and a faculty coordinator); the coordinator confirms (the request waits if they haven't joined yet), then the DSW approves and the club is created with the student as owner and the founding team as editors
+- **For You** — upcoming events ranked on the server by interests, clubs you're in, closing deadlines and popularity
 - **DSW console** — review requests, see and end club teams, assign faculty, switch account types, read the activity log
 - **Platform console** — the tech team appoints DSW accounts
 - **Auth** — one sign-up for everyone; the college email's domain makes the account a student or a faculty one
@@ -220,6 +225,9 @@ npm run dev
 | `events`        | Events posted by clubs              |
 | `club_roles`    | A person's roles in a club (member, working member, editor, owner, faculty coordinator), their status, and for memberships the academic year's end |
 | `club_applications` | Members applying to (or renewing their place on) a club's working team |
+| `leave_requests` | Members asking the DSW to leave a club's working team, or the club |
+| `club_benefits` | Perks a club lists for its members or working team |
+| `club_requests` | Students proposing new clubs, with the coordinator's and the DSW's decisions |
 | `club_announcements` / `announcement_comments` / `announcement_reactions` | The working team's updates |
 | `audit_log`     | Who did what, when (governance actions) |
 | `registrations` | User ↔ Event registrations          |
@@ -235,12 +243,7 @@ npm run dev
 
 - **Real club data** — the DSW's audited club list replaces the sample clubs; audit scores, categories and remarks are kept per academic year and visible only to the DSW
 - **Sign in with Microsoft** — MUJ accounts only; sign-up always proves mailbox ownership, one account per email; a password can be added afterwards (so alumni keep access), protected by an email or authenticator-app code
-- **New club requests** — students propose a club; its faculty coordinator confirms, then the DSW approves and the requester becomes the owner
 - **Working-team chat** — one live group chat per club for its working team (WebSockets on our own backend)
-- **Private clubs** — the team or the DSW can hide a club from listings while its page and history stay viewable
-- **Leaving a club** — by request, approved by the DSW
-- **Member benefits** — clubs list perks for their members (no payments yet)
-- **Recommendations** — server-side ranking for "For You" (interests, deadlines, clubs joined, popularity)
 
 ### Future updates
 

@@ -26,6 +26,11 @@ export function ClubsPage({ onViewClub }: Props) {
           <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginTop: 8 }}>
             {loading ? '…' : `${total} clubs across every interest`}
           </p>
+          {canJoin && (
+            <button className="btn-g" onClick={() => navigate('/clubs/new')} style={{ marginTop: 16, padding: '9px 16px', fontSize: 10, letterSpacing: 1.5 }}>
+              Don't see your club? Propose a new one →
+            </button>
+          )}
         </div>
       </div>
 
@@ -68,6 +73,7 @@ function ClubCard({ club, delay, isMember, canJoin, onView, onJoin }: {
           <span style={{ fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 700, color: club.color }}>{club.abbr.slice(0, 4)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {club.is_private && <span style={{ fontSize: 9, fontFamily: 'var(--mono)', color: '#A855F7', border: '1px solid rgba(168,85,247,0.35)', padding: '2px 7px' }}>Private</span>}
           {club.is_open
             ? <span style={{ fontSize: 9, fontFamily: 'var(--mono)', color: '#10B981', border: '1px solid rgba(16,185,129,0.3)', padding: '2px 7px' }}>Open</span>
             : <span style={{ fontSize: 9, fontFamily: 'var(--mono)', color: 'var(--gray2)', border: '1px solid var(--dark4)', padding: '2px 7px' }}>Closed</span>

@@ -1,3 +1,4 @@
+import math
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,8 +9,8 @@ from app.db.database import get_db
 from app.models.club import Club
 from app.models.event import Event
 from app.models.membership import Registration, SavedEvent
-from app.models.user import User
-from app.core.deps import get_or_404, get_current_active_user, ensure_can_manage
+from app.models.user import User, AccountType
+from app.core.deps import get_or_404, get_current_active_user, get_optional_user, ensure_can_manage
 from app.schemas.event import (
     EventOut, EventPage, EventCreate, EventUpdate, RegistrationStatus, SaveStatus, RegistrantOut,
 )
@@ -39,6 +40,25 @@ def _has_tag(tag: str):
     return wrapped.contains(f",{tag.strip()},", autoescape=True)
 
 
+def _visible_to(user: User | None):
+    """Filter: a private club's upcoming events are only for the people in it (and the DSW).
+    Its past events stay visible to everyone, as the club's history. None: no filter needed."""
+    if user and user.account_type == AccountType.dsw:
+        return None
+    hidden = select(Club.id).where(Club.is_private == True, Club.id.not_in(user.club_ids if user else set()))  # noqa: E712
+    return or_(Event.end_date < date.today(), Event.club_id.not_in(hidden))
+
+
+async def _get_visible_event(db: AsyncSession, event_id: int, user: User | None) -> Event:
+    """The event, or a 404 if it's a private club's upcoming event and this user is outside the club."""
+    event = await get_or_404(db, Event, event_id)
+    if event.end_date >= date.today() and not (user and user.sees_inside(event.club_id)):
+        club = await db.get(Club, event.club_id)
+        if club and club.is_private:
+            raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+
 def _int_list(raw: str, name: str) -> list[int]:
     try:
         return [int(x) for x in raw.split(",") if x.strip()]
@@ -61,10 +81,13 @@ async def list_events(
     limit: int = Query(12, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(get_optional_user),
 ):
     """Published events by start date (soonest first by default), one page at a time.
     `total` is the number of matching events across all pages (for "Load more" and counts)."""
     filters = [Event.is_published == True]
+    if (visible := _visible_to(user)) is not None:
+        filters.append(visible)
     if tag:
         filters.append(_has_tag(tag))
     if tags:
@@ -101,9 +124,48 @@ async def list_events(
     return EventPage(items=[EventOut.model_validate(e) for e in result.scalars().all()], total=total)
 
 
+@router.get("/for-you", response_model=list[EventOut])
+async def for_you(
+    limit: int = Query(6, ge=1, le=24),
+    db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """Upcoming events still open for registration, ranked for this user:
+      +3 per tag matching their interests, +4 if it's a club they're in,
+      +3 / +2 if registration closes within 3 / 7 days, up to +3 for popularity (registrations).
+    Events they've already registered for are left out. Signed out: popularity and deadlines only."""
+    today = date.today()
+    filters = [Event.is_published == True, Event.end_date >= today,  # noqa: E712
+               or_(Event.reg_deadline.is_(None), Event.reg_deadline >= today)]
+    if (visible := _visible_to(user)) is not None:
+        filters.append(visible)
+    if user:
+        filters.append(Event.id.not_in(select(Registration.event_id).where(Registration.user_id == user.id)))
+    counts = select(Registration.event_id, func.count().label("n")).group_by(Registration.event_id).subquery()
+    rows = (await db.execute(
+        select(Event, func.coalesce(counts.c.n, 0)).outerjoin(counts, counts.c.event_id == Event.id).where(*filters)
+    )).all()
+
+    interests = {t.strip() for t in (user.interests or "").split(",") if t.strip()} if user else set()
+    clubs = user.club_ids if user else set()
+
+    def score(e: Event, registrations: int) -> float:
+        s = 3 * len(interests & {t.strip() for t in e.tags.split(",")})
+        if e.club_id in clubs:
+            s += 4
+        if e.reg_deadline:
+            days_left = (e.reg_deadline - today).days
+            s += 3 if days_left <= 3 else 2 if days_left <= 7 else 0
+        return s + min(3.0, math.log2(1 + registrations))
+
+    ranked = sorted(rows, key=lambda r: (-score(*r), r[0].start_date, r[0].id))
+    return [EventOut.model_validate(e) for e, _ in ranked[:limit]]
+
+
 @router.get("/{event_id}", response_model=EventOut)
-async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
-    return await get_or_404(db, Event, event_id)
+async def get_event(event_id: int, db: AsyncSession = Depends(get_db),
+                    user: Optional[User] = Depends(get_optional_user)):
+    return await _get_visible_event(db, event_id, user)
 
 
 @router.post("", response_model=EventOut, status_code=201)
@@ -190,7 +252,7 @@ async def register_for_event(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
-    event = await get_or_404(db, Event, event_id)
+    event = await _get_visible_event(db, event_id, user)
     # Registration stays open through the deadline day itself (matches the event page)
     if event.reg_deadline and event.reg_deadline < date.today():
         raise HTTPException(status_code=400, detail="Registration for this event has closed")

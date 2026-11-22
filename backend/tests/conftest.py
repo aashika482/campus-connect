@@ -57,6 +57,7 @@ async def clean_db():
             await conn.execute(text(
                 "INSERT INTO clubs (id, name, abbr, description, color, tags, is_open) "
                 "VALUES (:id, :name, :abbr, 'd', '#000', 'tech', true)"), {"id": id_, "name": name, "abbr": abbr})
+        await conn.execute(text("SELECT setval(pg_get_serial_sequence('clubs', 'id'), (SELECT MAX(id) FROM clubs))"))
     yield
 
 

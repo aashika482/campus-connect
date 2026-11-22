@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -6,23 +7,24 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.orm import aliased
 
 from app.db.database import get_db
-from app.models.club import Club
+from app.models.club import Club, ClubBenefit
 from app.models.event import Event
 from app.models.audit import AuditLog
 from app.models.membership import (
     ClubRole, ClubRoleKind, ClubRoleStatus, Registration, OPEN_STATUSES, TEAM_ROLES, STUDENT_TEAM_ROLES,
-    CURRENT, ClubApplication, ApplicationStatus, OPEN_APPLICATION_STATUSES,
+    CURRENT, ClubApplication, ApplicationStatus, OPEN_APPLICATION_STATUSES, LeaveRequest, LeaveStatus,
 )
 from app.models.user import User, AccountType
-from app.core.deps import get_or_404, get_current_active_user, require_dsw, ensure_can_manage
+from app.core.deps import get_or_404, get_current_active_user, get_optional_user, require_dsw, ensure_can_manage
 from app.core.governance import (
     role_page, role_detail, request_team_role, membership_end, close_lapsed, lapsed_working_member,
-    application_block, act_on_application,
+    application_block, act_on_application, leave_block,
 )
 from app.schemas.event import (
     ClubOut, ClubPage, ClubCreate, ClubMembershipStatus, MemberOut, EventRef,
     ClubRoleDetailOut, ClubRolePage, OwnerRequest, EditorProposal, ClubSettingsUpdate,
     ApplicationOut, ApplicationPage, MyApplication, ApplicationAction, Roster, RosterEntry,
+    BenefitIn, BenefitOut, LeaveIn, MyLeaveRequest,
 )
 
 router = APIRouter()
@@ -34,9 +36,13 @@ async def list_clubs(
     limit: int = Query(12, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(get_optional_user),
 ):
-    """Clubs A→Z, one page at a time. `total` counts matches across all pages."""
+    """Clubs A→Z, one page at a time. `total` counts matches across all pages.
+    Private clubs are listed only for the people in them (and the DSW)."""
     filters = []
+    if not (user and user.account_type == AccountType.dsw):
+        filters.append(or_(Club.is_private == False, Club.id.in_(user.club_ids if user else set())))  # noqa: E712
     if q and q.strip():
         term = q.strip().lower()
         filters.append(or_(*(
@@ -86,6 +92,8 @@ async def join_club(
     club = await get_or_404(db, Club, club_id)
     if user.account_type != AccountType.student:
         raise HTTPException(status_code=403, detail="Only students can join clubs")
+    if club.is_private and not user.sees_inside(club_id):
+        raise HTTPException(status_code=403, detail=f"{club.name} is private and isn't taking members")
     if not user.is_member_of(club_id):
         renewal = close_lapsed(user, club_id, ClubRoleKind.member)
         db.add(ClubRole(user_id=user.id, club_id=club_id, role=ClubRoleKind.member,
@@ -192,10 +200,12 @@ async def update_settings(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
-    """Recruiting on/off, the multi-club rule for working members, and the yearly fees. The club's team."""
-    ensure_can_manage(user, club_id)
-    club = await get_or_404(db, Club, club_id)
+    """Private, recruiting, the multi-club rule for working members and the yearly fees: the club's team.
+    The DSW can make any club private or public."""
     changes = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if not (user.account_type == AccountType.dsw and set(changes) <= {"is_private"}):
+        ensure_can_manage(user, club_id)
+    club = await get_or_404(db, Club, club_id)
     for k, v in changes.items():
         setattr(club, k, v)
     if club.fee_working < club.fee_member:
@@ -215,7 +225,9 @@ async def club_roster(
 ):
     """Everyone in the club this academic year. The working team sees course, interests and roles;
     everyone else sees names only. Contact details are never shown here."""
-    await get_or_404(db, Club, club_id)
+    club = await get_or_404(db, Club, club_id)
+    if club.is_private and not user.sees_inside(club_id):
+        return Roster(detailed=False, items=[])
     detailed = user.on_working_team(club_id)
     rows = (await db.execute(
         select(User, ClubRole.role, ClubRole.title)
@@ -326,3 +338,92 @@ async def review_application(
     applicant = await get_or_404(db, User, app.user_id)
     await act_on_application(db, app, club, applicant, user, payload.action)
     await db.commit()
+
+
+# ── Member benefits ──────────────────────────────────────
+@router.get("/{club_id}/benefits", response_model=list[BenefitOut])
+async def list_benefits(
+    club_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(get_optional_user),
+):
+    """The club's current perks. Public, except for a private club's outsiders."""
+    club = await get_or_404(db, Club, club_id)
+    if club.is_private and not (user and user.sees_inside(club_id)):
+        return []
+    rows = (await db.execute(
+        select(ClubBenefit).where(ClubBenefit.club_id == club_id,
+                                  or_(ClubBenefit.valid_until.is_(None), ClubBenefit.valid_until >= date.today()))
+        .order_by(ClubBenefit.audience, ClubBenefit.id)
+    )).scalars().all()
+    return rows
+
+
+@router.post("/{club_id}/benefits", response_model=BenefitOut, status_code=201)
+async def add_benefit(
+    club_id: int,
+    payload: BenefitIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    ensure_can_manage(user, club_id)
+    benefit = ClubBenefit(club_id=club_id, **payload.model_dump())
+    db.add(benefit)
+    await db.commit()
+    await db.refresh(benefit)
+    return benefit
+
+
+@router.delete("/{club_id}/benefits/{benefit_id}", status_code=204)
+async def remove_benefit(
+    club_id: int,
+    benefit_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    ensure_can_manage(user, club_id)
+    benefit = await get_or_404(db, ClubBenefit, benefit_id)
+    if benefit.club_id != club_id:
+        raise HTTPException(status_code=404, detail="ClubBenefit not found")
+    await db.delete(benefit)
+    await db.commit()
+
+
+# ── Leaving (the DSW approves) ───────────────────────────
+async def _latest_leave(db: AsyncSession, user_id: int, club_id: int) -> LeaveRequest | None:
+    return (await db.execute(
+        select(LeaveRequest).where(LeaveRequest.user_id == user_id, LeaveRequest.club_id == club_id)
+        .order_by(LeaveRequest.id.desc()).limit(1)
+    )).scalar_one_or_none()
+
+
+@router.get("/{club_id}/leave", response_model=MyLeaveRequest)
+async def my_leave_request(
+    club_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    latest = await _latest_leave(db, user.id, club_id)
+    return MyLeaveRequest(status=latest.status, scope=latest.scope) if latest else MyLeaveRequest()
+
+
+@router.post("/{club_id}/leave", response_model=MyLeaveRequest, status_code=201)
+async def request_to_leave(
+    club_id: int,
+    payload: LeaveIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Ask the DSW to let you leave this club's working team, or the club."""
+    club = await get_or_404(db, Club, club_id)
+    if reason := leave_block(user, club_id, payload.scope):
+        raise HTTPException(status_code=400, detail=reason)
+    latest = await _latest_leave(db, user.id, club_id)
+    if latest and latest.status == LeaveStatus.pending:
+        raise HTTPException(status_code=400, detail="You already have a request waiting for the DSW")
+    req = LeaveRequest(user_id=user.id, club_id=club_id, scope=payload.scope, reason=payload.reason)
+    db.add(req)
+    await db.flush()
+    AuditLog.record(db, user, "leave.request", "leave_request", req.id, club=club.name, scope=payload.scope.value)
+    await db.commit()
+    return MyLeaveRequest(status=req.status, scope=req.scope)

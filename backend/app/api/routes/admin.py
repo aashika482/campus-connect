@@ -1,6 +1,6 @@
 # Governance consoles. Mounted at /api/admin:
-#   /dsw/...       the DSW office: reviews club team requests, assigns faculty coordinators,
-#                  switches account types (student / faculty / alumni), features events
+#   /dsw/...       the DSW office: reviews club team requests and leave requests, assigns faculty
+#                  coordinators, switches account types (student / faculty / alumni), features events
 #   /platform/...  the tech team: grants and removes DSW accounts (no business authority)
 #   /audit-log     both: who did what, when
 # The team rules themselves live in app.core.governance.
@@ -13,16 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_or_404, require_account, require_dsw, require_platform_admin
-from app.core.governance import assign_faculty, end_roles, review_role, role_detail, role_page
+from app.core.governance import assign_faculty, end_roles, review_leave, review_role, role_detail, role_page
 from app.db.database import get_db
 from app.models.audit import AuditLog
 from app.models.club import Club
 from app.models.event import Event
-from app.models.membership import ClubRole, ClubRoleKind, ClubRoleStatus, STUDENT_TEAM_ROLES, TEAM_ROLES
+from app.models.membership import (
+    ClubRole, ClubRoleKind, ClubRoleStatus, STUDENT_TEAM_ROLES, TEAM_ROLES, LeaveRequest, LeaveStatus,
+)
 from app.models.user import User, AccountType
 from app.schemas.event import (
     AccountOut, AccountPage, AccountTypeUpdate, AuditLogOut, AuditLogPage, ClubRoleDetailOut,
     ClubRolePage, DswAccountGrant, EventOut, FacultyAssignment, HotUpdate, RoleReview,
+    LeaveRequestOut, LeaveRequestPage, LeaveReview,
 )
 
 router = APIRouter()
@@ -81,6 +84,45 @@ async def review_club_role(
     await review_role(db, row, target, payload.action, dsw, payload.multi_club_exception)
     await db.commit()
     return role_detail(row, target)
+
+
+# ── DSW: leave requests ──────────────────────────────────
+@router.get("/dsw/leave-requests", response_model=LeaveRequestPage)
+async def list_leave_requests(
+    status: LeaveStatus = Query(LeaveStatus.pending),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_dsw),
+):
+    """Students asking to leave a club's working team, or a club. Oldest first: a queue."""
+    filters = [LeaveRequest.status == status]
+    total = (await db.execute(select(func.count()).select_from(LeaveRequest).where(*filters))).scalar()
+    rows = (await db.execute(
+        select(LeaveRequest, User, Club.name)
+        .join(User, User.id == LeaveRequest.user_id).join(Club, Club.id == LeaveRequest.club_id)
+        .where(*filters).order_by(LeaveRequest.created_at, LeaveRequest.id).limit(limit).offset(offset)
+    )).all()
+    return LeaveRequestPage(total=total, items=[
+        LeaveRequestOut(id=r.id, club_id=r.club_id, club_name=club_name, scope=r.scope, reason=r.reason,
+                        status=r.status, created_at=r.created_at, reviewed_at=r.reviewed_at,
+                        user_id=u.id, name=u.name, email=u.email, phone=u.phone, reg_no=u.reg_no, course=u.course)
+        for r, u, club_name in rows
+    ])
+
+
+@router.patch("/dsw/leave-requests/{request_id}", status_code=204)
+async def decide_leave_request(
+    request_id: int,
+    payload: LeaveReview,
+    db: AsyncSession = Depends(get_db),
+    dsw: User = Depends(require_dsw),
+):
+    req = await get_or_404(db, LeaveRequest, request_id)
+    leaver = await get_or_404(db, User, req.user_id)
+    club = await get_or_404(db, Club, req.club_id)
+    await review_leave(db, req, leaver, club, payload.action, dsw)
+    await db.commit()
 
 
 @router.post("/dsw/clubs/{club_id}/faculty", response_model=ClubRoleDetailOut, status_code=201)
