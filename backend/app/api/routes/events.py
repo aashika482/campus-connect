@@ -31,9 +31,11 @@ async def _get_own_event(db: AsyncSession, event_id: int, user: User) -> Event:
     return event
 
 
-def _check_dates(start: date, end: date) -> None:
+def _check_dates(start: date, end: date, deadline: date | None) -> None:
     if end < start:
         raise HTTPException(status_code=400, detail="End date can't be before the start date")
+    if deadline and deadline > end:
+        raise HTTPException(status_code=400, detail="The registration deadline can't be after the event ends")
 
 
 def _has_tag(tag: str):
@@ -161,7 +163,7 @@ async def create_event(
     """A club's team posts events for that club only."""
     ensure_can_manage(user, payload.club_id)
     club = await get_or_404(db, Club, payload.club_id)
-    _check_dates(payload.start_date, payload.end_date)
+    _check_dates(payload.start_date, payload.end_date, payload.reg_deadline)
 
     event = Event(
         title=payload.title,
@@ -204,7 +206,8 @@ async def update_event(
         if not data["tags"]:
             raise HTTPException(status_code=400, detail="Select at least one tag")
         data["tags"] = ",".join(data["tags"])
-    _check_dates(data.get("start_date", event.start_date), data.get("end_date", event.end_date))
+    _check_dates(data.get("start_date", event.start_date), data.get("end_date", event.end_date),
+                 data.get("reg_deadline", event.reg_deadline))
 
     for k, v in data.items():
         setattr(event, k, v)

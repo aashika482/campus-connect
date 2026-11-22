@@ -12,7 +12,7 @@ class Event(Base):
     title:        Mapped[str]       = mapped_column(String(200))
     description:  Mapped[str]       = mapped_column(Text)
     club_id:      Mapped[int]       = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), index=True)
-    club_name:    Mapped[str]       = mapped_column(String(120))  # denormalized for quick reads
+    club_name:    Mapped[str]       = mapped_column(String(150))  # denormalized for quick reads (= clubs.name)
 
     start_date:   Mapped[date]      = mapped_column(Date)
     end_date:     Mapped[date]      = mapped_column(Date)

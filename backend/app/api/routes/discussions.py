@@ -69,7 +69,19 @@ async def _paginate_top_level(db: AsyncSession, base_filter, before_id: Optional
     comments = list((await db.execute(q)).scalars().all())
 
     await _attach_replies(db, comments)
-    return DiscussionPage(items=[DiscussionOut.model_validate(c) for c in comments], total=total)
+    items = [DiscussionOut.model_validate(c) for c in comments]
+    await _current_names(db, items)
+    return DiscussionPage(items=items, total=total)
+
+
+async def _current_names(db: AsyncSession, items: list[DiscussionOut]) -> None:
+    """Show each author's name as it is now (comments keep the name from when they were written)."""
+    everyone = [d for c in items for d in (c, *c.replies)]
+    names = dict((await db.execute(
+        select(User.id, User.name).where(User.id.in_({d.user_id for d in everyone}))
+    )).all()) if everyone else {}
+    for d in everyone:
+        d.user_name = names.get(d.user_id, d.user_name)
 
 
 def _short(text: str, n: int = 80) -> str:
@@ -84,8 +96,9 @@ async def _mentioned_user_ids(db: AsyncSession, event_id: int, content: str) -> 
     an unrelated Jacob elsewhere in the app. Names can contain spaces ("@John Kurian"),
     so we check each participant's name instead of splitting on whitespace.
     """
-    rows = (await db.execute(
-        select(Discussion.user_id, Discussion.user_name)
+    rows = (await db.execute(   # current names: someone who has renamed is mentioned by their new name
+        select(Discussion.user_id, User.name)
+        .join(User, User.id == Discussion.user_id)
         .where(Discussion.event_id == event_id)
         .distinct()
     )).all()

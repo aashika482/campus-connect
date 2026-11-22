@@ -13,7 +13,27 @@ TagId = Literal[TAG_IDS]
 
 
 MIN_PASSWORD = 8
-Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+
+
+def text(max_length: int, min_length: int = 0):
+    """Trimmed text no longer than its database column (a longer value is a clear 422, not a 500)."""
+    return Annotated[str, StringConstraints(strip_whitespace=True, min_length=min_length, max_length=max_length)]
+
+
+Name = text(120, 1)
+RegNo = text(30)
+Course = text(100)
+
+
+def check_web_url(v: str) -> str:
+    """Only http(s) addresses (or "" to clear): a javascript:/data: link would run code for whoever clicks it."""
+    if v and not re.match(r"^https?://[^\s<>\"']+$", v, re.IGNORECASE):
+        raise ValueError("Use a full web address starting with https://")
+    return v
+
+
+def web_url(max_length: int):
+    return Annotated[str, StringConstraints(strip_whitespace=True, max_length=max_length), AfterValidator(check_web_url)]
 
 
 def check_password(v: str) -> str:
@@ -80,8 +100,8 @@ class RegisterRequest(BaseModel):
     email: LowerEmail
     password: str
     phone: str
-    reg_no: Optional[str] = None
-    course: Optional[str] = None
+    reg_no: Optional[RegNo] = None
+    course: Optional[Course] = None
     interests: Optional[List[TagId]] = []
 
     @field_validator("password")
@@ -174,8 +194,8 @@ class UserOut(BaseModel):
 class UserUpdate(BaseModel):
     name: Optional[Name] = None
     phone: Optional[str] = None
-    reg_no: Optional[str] = None
-    course: Optional[str] = None
+    reg_no: Optional[RegNo] = None
+    course: Optional[Course] = None
     interests: Optional[List[TagId]] = None
 
     @field_validator("phone")

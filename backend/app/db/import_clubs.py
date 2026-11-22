@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from sqlalchemy import delete, func, select, text
 
 from app.db.database import AsyncSessionLocal, engine
-from app.models.club import Club, ClubEvaluation, CoordinatorInvite
+from app.models.club import Club, ClubEvaluation, ClubRequest, CoordinatorInvite
 from app.core.governance import CLUB_COLORS
 
 # Name as in the audit sheet → (short name, tags). Tags "" = not categorized yet: the owner picks them.
@@ -174,7 +174,7 @@ def read_sheet(path: str) -> list[dict]:
     return rows
 
 
-async def run(path: str | None, year: str | None, replace: bool) -> None:
+async def run(path: str | None, year: str | None, replace: bool, assume_yes: bool = False) -> None:
     rows = read_sheet(path) if path else [dict(name=n) for n in CLUBS]
     async with AsyncSessionLocal() as db:
         existing = {c.name.lower(): c for c in (await db.execute(select(Club))).scalars().all()}
@@ -209,7 +209,17 @@ async def run(path: str | None, year: str | None, replace: bool) -> None:
 
         removed = 0
         if replace:
-            removed = (await db.execute(delete(Club).where(Club.id.not_in(keep)))).rowcount
+            # Clubs students created through approved requests aren't in any audit sheet yet: never delete them
+            keep |= set((await db.execute(select(ClubRequest.club_id).where(ClubRequest.club_id.is_not(None)))).scalars().all())
+            doomed = (await db.execute(select(Club.name).where(Club.id.not_in(keep)).order_by(Club.name))).scalars().all()
+            if doomed:
+                print(f"--replace would delete these {len(doomed)} clubs, with all their events, members and history:")
+                print("".join(f"  - {name}\n" for name in doomed), end="")
+                if not assume_yes and input("Type DELETE to go ahead: ").strip() != "DELETE":
+                    await db.rollback()
+                    await engine.dispose()
+                    sys.exit("Nothing changed.")
+                removed = (await db.execute(delete(Club).where(Club.id.not_in(keep)))).rowcount
         # Clubs may have been inserted with ids before: keep the id sequence ahead of them
         await db.execute(text("SELECT setval(pg_get_serial_sequence('clubs', 'id'), GREATEST((SELECT MAX(id) FROM clubs), 1))"))
         await db.commit()
@@ -226,8 +236,10 @@ if __name__ == "__main__":
     parser.add_argument("sheet", nargs="?", help="the DSW's audit .xlsx (its 'Consolidated Marks' tab)")
     parser.add_argument("--year", help="academic year of the audit, e.g. 2024-25 (needed with a sheet)")
     parser.add_argument("--replace", action="store_true", help="delete clubs that aren't in the sheet, or without one, "
-                        "not in the real list (and all their data)")
+                        "not in the real list (and all their data). Asks first, and never deletes clubs "
+                        "created through approved new-club requests")
+    parser.add_argument("--yes", action="store_true", help="don't ask before deleting (for scripts)")
     args = parser.parse_args()
     if args.sheet and not re.fullmatch(r"\d{4}-\d{2}", args.year or ""):
         parser.error("--year YYYY-YY is required with a sheet, e.g. --year 2024-25")
-    asyncio.run(run(args.sheet, args.year, args.replace))
+    asyncio.run(run(args.sheet, args.year, args.replace, args.yes))

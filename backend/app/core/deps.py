@@ -54,7 +54,7 @@ async def get_optional_user(
 
 async def get_current_active_user(user: User = Depends(get_current_user)) -> User:
     if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+        raise HTTPException(status_code=401, detail="This account is deactivated")
     return user
 
 

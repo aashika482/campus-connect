@@ -27,15 +27,26 @@ router = APIRouter()
 
 
 class ChatHub:
-    """The open chat sockets, per club."""
+    """The open chat sockets, per club (and whose each one is, to cut someone off)."""
     def __init__(self) -> None:
         self.rooms: dict[int, set[WebSocket]] = {}
+        self.owners: dict[WebSocket, int] = {}
 
-    def join(self, club_id: int, ws: WebSocket) -> None:
+    def join(self, club_id: int, ws: WebSocket, user_id: int) -> None:
         self.rooms.setdefault(club_id, set()).add(ws)
+        self.owners[ws] = user_id
 
     def leave(self, club_id: int, ws: WebSocket) -> None:
         self.rooms.get(club_id, set()).discard(ws)
+        self.owners.pop(ws, None)
+
+    async def kick(self, user_id: int) -> None:
+        """Close every chat socket this person has open (e.g. their account was deactivated)."""
+        for ws in [ws for ws, uid in self.owners.items() if uid == user_id]:
+            try:
+                await ws.close(code=4403)
+            except RuntimeError:
+                pass   # already closed
 
     async def broadcast(self, club_id: int, data: dict) -> None:
         sockets = list(self.rooms.get(club_id, ()))
@@ -129,7 +140,7 @@ async def chat_socket(ws: WebSocket, club_id: int):
         await ws.close(code=4403)
         return
 
-    hub.join(club_id, ws)
+    hub.join(club_id, ws, user_id)
     try:
         await ws.send_json({"type": "ready"})
         while True:

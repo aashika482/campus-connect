@@ -32,6 +32,10 @@ from app.schemas.user import (
 
 router = APIRouter()
 CODE_MINUTES, CODE_TRIES, RESEND_SECONDS = 10, 5, 60
+LOGIN_TRIES, LOCK_MINUTES = 5, 15
+# The same answer for a wrong email, a wrong password and a Microsoft-only account, so the login form
+# can't be used to find out who has an account
+BAD_LOGIN = "Wrong email or password. If you joined with Microsoft, use Sign in with Microsoft."
 
 
 async def _get_user_by_email(db: AsyncSession, email: str) -> User | None:
@@ -197,10 +201,20 @@ async def _notify_waiting_club_requests(db: AsyncSession, user: User) -> None:
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     """A correct password returns the second step to do (a challenge), unless this browser was remembered."""
     user = await _get_user_by_email(db, payload.email)
-    if user and not user.has_password:
-        raise HTTPException(status_code=400, detail="This account signs in with Microsoft. Add a password in your profile to use one.")
+    now = datetime.now(timezone.utc)
+    if user and user.locked_until and user.locked_until > now:
+        minutes = int((user.locked_until - now).total_seconds() // 60) + 1
+        raise HTTPException(status_code=429, detail=f"Too many wrong passwords. Try again in {minutes} minutes.")
     if not user or not verify_password(payload.password, user.password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if user:
+            user.failed_logins += 1
+            if user.failed_logins >= LOGIN_TRIES:
+                user.failed_logins, user.locked_until = 0, now + timedelta(minutes=LOCK_MINUTES)
+            await db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=BAD_LOGIN)
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="This account is deactivated")
+    user.failed_logins, user.locked_until = 0, None
     if device_token_valid(payload.device_token, user.id, user.password):
         return await _start_session(db, user)
     user.failed_codes = 0
@@ -249,8 +263,8 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
     user_id = int(decoded["sub"])
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Sign in again")
     return _make_token_response(user)
 
 

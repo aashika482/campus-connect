@@ -483,3 +483,30 @@ async def test_fixes_from_the_audit(client, signup, owner, coordinator, dsw):
     assert r.status_code == 400 and r.json()["detail"] == "This event has ended"
     assert (await client.post("/api/events", headers=owner, json={**EVENT, "club_id": 1, "tags": ["made-up"]})).status_code == 422
     assert (await client.patch("/api/clubs/1/settings", headers=owner, json={"tags": ["made-up"]})).status_code == 422
+
+
+
+async def test_input_limits_and_safe_links(client, signup, owner):
+    student = await signup("asha@muj.manipal.edu")
+    assert (await client.patch("/api/users/me", headers=student, json={"course": "x" * 200})).status_code == 422
+    for bad in ("javascript:alert(1)", "data:text/html,hi", "instagram.com/club"):
+        r = await client.patch("/api/clubs/1/settings", headers=owner, json={"instagram": bad})
+        assert r.status_code == 422 and "https://" in r.text
+    assert (await client.patch("/api/clubs/1/settings", headers=owner, json={"instagram": "https://instagram.com/ieee"})).status_code == 200
+    long_venue = await client.post("/api/events", headers=owner, json={**EVENT, "club_id": 1, "venue": "v" * 300})
+    assert long_venue.status_code == 422
+    bad_poster = await client.post("/api/events", headers=owner, json={**EVENT, "club_id": 1, "poster_url": "javascript:x"})
+    assert bad_poster.status_code == 422
+    late = await client.post("/api/events", headers=owner, json={**EVENT, "club_id": 1, "reg_deadline": "2030-02-01"})
+    assert late.status_code == 400 and "deadline" in late.json()["detail"]
+
+
+async def test_comments_show_current_names(client, signup, owner):
+    student = await signup("asha@muj.manipal.edu")
+    event = (await client.post("/api/events", headers=owner, json={**EVENT, "club_id": 1})).json()["id"]
+    await client.post(f"/api/discussions/{event}", headers=student, json={"content": "hi"})
+    await client.patch("/api/users/me", headers=student, json={"name": "Asha Verma"})
+    assert (await client.get(f"/api/discussions/{event}")).json()["items"][0]["user_name"] == "Asha Verma"
+    # ...and the new name is what @mentions match
+    await client.post(f"/api/discussions/{event}", headers=owner, json={"content": "@Asha Verma thanks"})
+    assert [n["kind"] for n in (await client.get("/api/notifications", headers=student)).json()["items"]] == ["mention"]

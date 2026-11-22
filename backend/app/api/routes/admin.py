@@ -25,8 +25,9 @@ from app.models.user import User, AccountType
 from app.schemas.event import (
     AccountOut, AccountPage, AccountTypeUpdate, AuditLogOut, AuditLogPage, ClubRoleDetailOut,
     ClubRolePage, DswAccountGrant, EventOut, FacultyAssignment, HotUpdate, RoleReview,
-    LeaveRequestOut, LeaveRequestPage, LeaveReview, EvaluationOut, EvaluationList,
+    LeaveRequestOut, LeaveRequestPage, LeaveReview, EvaluationOut, EvaluationList, AccountActiveUpdate,
 )
+from app.api.routes.chat import hub as chat_hub
 
 router = APIRouter()
 
@@ -218,6 +219,26 @@ async def set_account_type(
     return _account_out(user)
 
 
+@router.patch("/dsw/accounts/{user_id}/active", response_model=AccountOut)
+async def set_account_active(
+    user_id: int,
+    payload: AccountActiveUpdate,
+    db: AsyncSession = Depends(get_db),
+    dsw: User = Depends(require_dsw),
+):
+    """Deactivate an account (signed out everywhere at once, every sign-in refused; its history stays)
+    or reactivate it."""
+    user = await get_or_404(db, User, user_id)
+    if user.account_type in (AccountType.dsw, AccountType.platform_admin):
+        raise HTTPException(status_code=403, detail="DSW and platform admin accounts are managed by the tech team")
+    user.is_active = payload.is_active
+    AuditLog.record(db, dsw, "user.reactivate" if payload.is_active else "user.deactivate", "user", user.id, user=user.email)
+    await db.commit()
+    if not payload.is_active:
+        await chat_hub.kick(user.id)
+    return _account_out(user)
+
+
 # ── DSW: events ──────────────────────────────────────────
 @router.patch("/dsw/events/{event_id}/hot", response_model=EventOut)
 async def set_event_hot(
@@ -252,7 +273,7 @@ async def grant_dsw(
     user = await _user_by_email(db, payload.email)
     if user.account_type in (AccountType.dsw, AccountType.platform_admin):
         raise HTTPException(status_code=400, detail=f"{user.name} is already a {user.account_type.value} account")
-    await end_roles(db, user, TEAM_ROLES, admin, reason="became a DSW account")
+    await end_roles(db, user, (*TEAM_ROLES, ClubRoleKind.working_member), admin, reason="became a DSW account")
     old = user.account_type
     user.account_type = AccountType.dsw
     AuditLog.record(db, admin, "user.grant_dsw", "user", user.id, user=user.email, old=old.value)

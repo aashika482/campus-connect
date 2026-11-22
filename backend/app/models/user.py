@@ -31,6 +31,9 @@ class User(Base):
     totp_secret:  Mapped[str | None]  = mapped_column(String(64), nullable=True)
     # Wrong second-step codes since the last correct password: past CODE_TRIES, sign in again
     failed_codes: Mapped[int]         = mapped_column(Integer, default=0, server_default="0")
+    # Wrong passwords in a row; past LOGIN_TRIES, password login waits until locked_until
+    failed_logins: Mapped[int]        = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     account_type: Mapped[AccountType] = mapped_column(Enum(AccountType), default=AccountType.student)
 
     # Student fields

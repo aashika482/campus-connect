@@ -85,6 +85,31 @@ async def test_wrong_codes_are_capped(client, signup):
     assert r2.status_code == 429   # even the right code: sign in with the password again
 
 
+async def test_wrong_passwords_lock_the_account_for_a_while(client, signup):
+    await signup("asha@muj.manipal.edu")
+    nobody = await client.post("/api/auth/login", json={"email": "nobody@muj.manipal.edu", "password": "x"})
+    wrong = await client.post("/api/auth/login", json={"email": "asha@muj.manipal.edu", "password": "x"})
+    assert nobody.status_code == wrong.status_code == 401 and nobody.json() == wrong.json()   # no telling who exists
+    for _ in range(4):
+        await client.post("/api/auth/login", json={"email": "asha@muj.manipal.edu", "password": "x"})
+    r = await client.post("/api/auth/login", json={"email": "asha@muj.manipal.edu", "password": PASSWORD})
+    assert r.status_code == 429 and "Try again in" in r.json()["detail"]   # even the right password, for now
+
+
+async def test_deactivated_accounts_are_shut_out(client, signup):
+    headers = await signup("asha@muj.manipal.edu")
+    dsw = await signup("dsw@jaipur.manipal.edu", "dsw")
+    me = (await client.get("/api/users/me", headers=headers)).json()
+    assert (await client.patch(f"/api/admin/dsw/accounts/{me['id']}/active", headers=headers, json={"is_active": False})).status_code == 403
+    r = await client.patch(f"/api/admin/dsw/accounts/{me['id']}/active", headers=dsw, json={"is_active": False})
+    assert r.status_code == 200 and r.json()["is_active"] is False
+    assert (await client.get("/api/users/me", headers=headers)).status_code == 401          # signed out at once
+    r = await client.post("/api/auth/login", json={"email": "asha@muj.manipal.edu", "password": PASSWORD})
+    assert r.status_code == 403
+    await client.patch(f"/api/admin/dsw/accounts/{me['id']}/active", headers=dsw, json={"is_active": True})
+    assert (await client.get("/api/users/me", headers=headers)).status_code == 200
+
+
 async def test_names_and_passwords(client):
     r = await register_with_code(client, {**DETAILS, "email": "asha@muj.manipal.edu", "name": "   "})
     assert r.status_code == 422
@@ -125,7 +150,7 @@ async def test_microsoft_sign_in(client, monkeypatch):
     me = (await client.patch("/api/users/me", headers=headers, json={"reg_no": "1", "course": "BBA", "phone": "9876543210"})).json()
     assert me["profile_complete"] is True
     r = await client.post("/api/auth/login", json={"email": "asha@muj.manipal.edu", "password": "anything"})
-    assert r.status_code == 400 and "signs in with Microsoft" in r.json()["detail"]
+    assert r.status_code == 401 and "Sign in with Microsoft" in r.json()["detail"]   # same answer as a wrong password
     assert (await client.post("/api/users/me/password", headers=headers, json={"new_password": "alumni-later"})).json()["has_password"]
 
     faculty = (await client.post("/api/auth/microsoft", json={"id_token": "rao"})).json()["user"]

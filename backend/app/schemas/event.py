@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from app.models.membership import ClubRoleKind, ClubRoleStatus, ApplicationStatus, LeaveScope, LeaveStatus
 from app.models.user import AccountType
-from app.schemas.user import LowerEmail, TagId
+from app.schemas.user import LowerEmail, TagId, text, web_url
 
 T = TypeVar("T")
 
@@ -46,8 +46,8 @@ class ClubSettingsUpdate(BaseModel):
     description: Optional[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3000)]] = None
     tags: Optional[Annotated[List[TagId], Field(max_length=4)]] = None    # [] = not categorized
     color: Optional[Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]] = None
-    instagram: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
-    linkedin: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
+    instagram: Optional[web_url(200)] = None
+    linkedin: Optional[web_url(200)] = None
     is_open: Optional[bool] = None           # taking new members
     is_private: Optional[bool] = None
     recruiting: Optional[bool] = None
@@ -93,42 +93,42 @@ EventPage = Page[EventOut]
 
 
 class EventCreate(BaseModel):
-    title: str
-    description: str
+    title: text(200, 1)
+    description: text(10000, 1)
     club_id: int
     start_date: date
     end_date: date
     reg_deadline: Optional[date] = None
-    date_display: str
+    date_display: text(40, 1)
     tags: Annotated[List[TagId], Field(min_length=1)]
-    team_size: Optional[str] = None
-    poster_url: Optional[str] = None
+    team_size: Optional[text(30)] = None
+    poster_url: Optional[web_url(500)] = None
 
     # ── New fields ──
-    venue: Optional[str] = None
-    time_info: Optional[str] = None
-    registration_fee: Optional[str] = "Free"
-    prize_pool: Optional[str] = None
-    contact_info: Optional[str] = None
+    venue: Optional[text(200)] = None
+    time_info: Optional[text(100)] = None
+    registration_fee: Optional[text(50)] = "Free"
+    prize_pool: Optional[text(200)] = None
+    contact_info: Optional[text(2000)] = None
 
 
 class EventUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
+    title: Optional[text(200, 1)] = None
+    description: Optional[text(10000, 1)] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     reg_deadline: Optional[date] = None
-    date_display: Optional[str] = None
+    date_display: Optional[text(40, 1)] = None
     tags: Optional[List[TagId]] = None
-    team_size: Optional[str] = None
-    poster_url: Optional[str] = None
+    team_size: Optional[text(30)] = None
+    poster_url: Optional[web_url(500)] = None
 
     # ── New fields ──
-    venue: Optional[str] = None
-    time_info: Optional[str] = None
-    registration_fee: Optional[str] = None
-    prize_pool: Optional[str] = None
-    contact_info: Optional[str] = None
+    venue: Optional[text(200)] = None
+    time_info: Optional[text(100)] = None
+    registration_fee: Optional[text(50)] = None
+    prize_pool: Optional[text(200)] = None
+    contact_info: Optional[text(2000)] = None
 
 
 # ── Admin people lists (registrants / members) ───────────
@@ -226,8 +226,8 @@ class ClubRequestIn(BaseModel):
     abbr: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
     description: Text3000
     tags: Annotated[List[TagId], Field(min_length=1, max_length=4)]
-    instagram: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
-    linkedin: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
+    instagram: Optional[web_url(200)] = None
+    linkedin: Optional[web_url(200)] = None
     affiliation: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]] = None
     purpose: Text3000
     plans: Text3000
@@ -432,6 +432,10 @@ class AccountOut(PersonOut):
 
 
 AccountPage = Page[AccountOut]
+
+
+class AccountActiveUpdate(BaseModel):
+    is_active: bool
 
 
 class AccountTypeUpdate(BaseModel):
