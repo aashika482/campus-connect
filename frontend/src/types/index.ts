@@ -5,7 +5,7 @@
 export type AccountType = 'student' | 'faculty' | 'alumni' | 'dsw' | 'platform_admin'
 
 // Club roles are per club (mirrors ClubRoleKind / ClubRoleStatus in backend/app/models/membership.py)
-export type ClubRoleKind = 'member' | 'editor' | 'owner' | 'faculty_coordinator'
+export type ClubRoleKind = 'member' | 'working_member' | 'editor' | 'owner' | 'faculty_coordinator'
 export type ClubRoleStatus = 'pending' | 'active' | 'rejected' | 'ended'
 
 export interface ClubRole {
@@ -16,6 +16,7 @@ export interface ClubRole {
   status: ClubRoleStatus
   title: string | null
   created_at: string
+  expires_on: string | null   // yearly memberships: last day of the academic year (YYYY-MM-DD)
 }
 
 export interface User {
@@ -77,6 +78,7 @@ export interface AuditEntry {
 
 export interface ClubMember extends Person {
   joined_at: string
+  is_working: boolean                                  // on the working team (else a non-working member)
   registered_events: { id: number; title: string }[]   // this club's events they registered for
 }
 
@@ -92,6 +94,72 @@ export interface Club {
   is_open: boolean
   instagram?: string
   linkedin?: string
+  // Team settings
+  recruiting: boolean            // working-team applications open
+  working_multi_club: boolean    // its working members may work for other clubs too
+  fee_member: number             // yearly fees, ₹ (collected outside the portal until payments exist)
+  fee_working: number
+}
+
+// ── Working-team applications ────────────────────────────
+export type ApplicationStatus = 'applied' | 'shortlisted' | 'recommended' | 'accepted' | 'declined'
+
+export interface Application extends Person {
+  id: number
+  club_id: number
+  status: ApplicationStatus
+  is_renewal: boolean
+  reviewed_by_name: string | null
+  decided_by_name: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MyApplication {
+  status: ApplicationStatus | null   // latest application, if any
+  is_renewal: boolean                // the open application (or the next one) renews last year's place
+  can_apply: boolean
+  reason: string | null              // why not, when can_apply is false
+}
+
+// ── Roster (detailed for the working team, names only for everyone else) ──
+export interface RosterEntry {
+  user_id: number
+  name: string
+  course: string | null
+  interests: string | null
+  roles: ClubRoleKind[]
+  title: string | null
+}
+
+export interface Roster {
+  detailed: boolean
+  items: RosterEntry[]
+}
+
+// ── Announcements (the working team's updates) ───────────
+export const REACTIONS = ['👍', '❤️', '🎉', '😂', '😮', '🙏'] as const
+
+export interface Reaction { emoji: string; count: number; mine: boolean }
+
+export interface AnnouncementComment {
+  id: number
+  author_id: number | null
+  author_name: string | null
+  body: string
+  created_at: string
+}
+
+export interface Announcement {
+  id: number
+  club_id: number
+  author_id: number | null
+  author_name: string | null
+  author_title: string | null
+  body: string
+  created_at: string
+  reactions: Reaction[]
+  comments: AnnouncementComment[]
 }
 
 // ── Event ────────────────────────────────────────────────
@@ -164,9 +232,11 @@ export type DiscussionPage = Page<Discussion>   // total = top-level comments on
 // ── Notification ─────────────────────────────────────────
 export interface Notification {
   id: number
-  kind: string            // "reply" | "comment" | "mention"
+  // events: "reply" | "comment" | "mention"; clubs: "announcement" | "ann_comment" | "application" | "app_review"
+  kind: string
   message: string
-  event_id: number
+  event_id: number | null
+  club_id: number | null
   discussion_id: number | null
   is_read: boolean
   created_at: string
@@ -185,7 +255,8 @@ export const ACCOUNT_LABELS: Record<AccountType, string> = {
 }
 
 export const ROLE_LABELS: Record<ClubRoleKind, string> = {
-  member: 'Member', editor: 'Editor', owner: 'Owner', faculty_coordinator: 'Faculty coordinator',
+  member: 'Member', working_member: 'Working member', editor: 'Editor', owner: 'Owner',
+  faculty_coordinator: 'Faculty coordinator',
 }
 
 export const activeRoles = (user: User | null, ...kinds: ClubRoleKind[]): ClubRole[] =>
@@ -197,6 +268,10 @@ export const teamClubs = (user: User | null): { id: number; name: string }[] =>
 
 export const canManage = (user: User | null, clubId: number): boolean =>
   activeRoles(user, ...TEAM_ROLES).some(r => r.club_id === clubId)
+
+// The club's working team: its team plus working members (announcements, detailed roster)
+export const onWorkingTeam = (user: User | null, clubId: number): boolean =>
+  canManage(user, clubId) || activeRoles(user, 'working_member').some(r => r.club_id === clubId)
 
 // May delete any comment on this club's events
 export const canModerate = (user: User | null, clubId: number): boolean =>

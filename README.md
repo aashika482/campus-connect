@@ -41,38 +41,46 @@ Owners, editors and faculty coordinators are the club's *team*: they post events
 | ORM          | SQLAlchemy async                                             |
 | Database     | Neon (cloud PostgreSQL)                                      |
 | Auth         | JWT (access + refresh tokens)                                |
-| Image Upload | Cloudinary (direct frontend upload)                          |
+| Image Upload | Cloudinary (browser uploads, signed by the backend)          |
 | Deployment   | Railway (backend) + Vercel (frontend)                        |
 
 ---
 
 ## Features
 
-- **Event discovery** — browse all campus events with filters by tag, search by name
+- **Event discovery** — browse all campus events with filters by tag, search by title, club, description and tags
 - **Event detail pages** — poster, description, venue, dates, registration fee, prize pool
 - **Club pages** — club info, member count, join, social links, ask to run the club
-- **Registration & saving** — register for events, save them for later
+- **Registration & saving** — register for events (and cancel until the event ends), save them for later
 - **Discussions** — comment on events and reply to each other, with official club replies badged; 15-minute edit window and in-app reply notifications
-- **Admin dashboard** — post events, view registrations, manage discussion feed
+- **Calendar** — month/year navigation over every event
+- **Club dashboard** — for a club's approved team: post, edit and delete events, see members and registrations, moderate discussions
 - **Club teams, verified** — owner/editor requests wait for the DSW; a club's dashboard opens only for its approved team
+- **Yearly memberships** — students join a club for the academic year (until 31 July) as non-working members; joining again renews
+- **Working teams** — while a club is recruiting, members apply; the owner/editors shortlist and recommend after an offline interview, the faculty coordinator approves. Last year's working members renew the same way. A club decides whether its working members may also work for other clubs
+- **Club roster** — everyone sees this year's member names; the working team also sees course, interests and roles (never contact details)
+- **Announcements** — the club's team posts updates for its working team, who react and comment
+- **Club settings** — recruiting on/off, the multi-club rule, and the yearly fees (default ₹500 member / ₹1000 working)
 - **DSW console** — review requests, see and end club teams, assign faculty, switch account types, read the activity log
 - **Platform console** — the tech team appoints DSW accounts
-- **Auth** — separate registration flows for students and club committee members
+- **Auth** — one sign-up for everyone; the college email's domain makes the account a student or a faculty one
 
 ---
 
 ## Project Structure
 
 ```
-Club_Discovery_App/
+campus-connect/
 ├── backend/
 │   ├── main.py                  # FastAPI app, CORS, route registration
-│   ├── requirements.txt
+│   ├── requirements.txt         # + requirements-dev.txt for tests
 │   ├── Procfile                 # Railway start command
+│   ├── alembic/                 # database migrations
+│   ├── tests/                   # pytest: auth and permissions
 │   └── app/
-│       ├── api/routes/          # auth, events, clubs, users, discussions
-│       ├── core/                # config, security (JWT + bcrypt)
-│       ├── db/                  # async engine, session, table creation
+│       ├── api/routes/          # auth, users, events, clubs, discussions, notifications, uploads, admin
+│       ├── core/                # config, security (JWT + bcrypt), governance rules
+│       ├── db/                  # async engine + session, seed, demo data, bootstrap_admin
 │       ├── models/              # SQLAlchemy models
 │       └── schemas/             # Pydantic schemas
 └── frontend/
@@ -90,24 +98,50 @@ Club_Discovery_App/
 
 ## Running Locally
 
-### Backend
+The project needs **Python 3.12** (the pinned packages don't install on 3.13+) and **Node 22**. Nothing has to be installed system-wide: both can live inside the project, with their caches, in the git-ignored `.tools/` folder and `backend/venv`.
+
+### One-time setup
+
+```bash
+# Python 3.12 + backend packages (uv fetches 3.12 into .tools/, any system Python 3 can bootstrap it)
+export UV_PYTHON_INSTALL_DIR=$PWD/.tools/python UV_CACHE_DIR=$PWD/.tools/cache/uv PIP_CACHE_DIR=$PWD/.tools/cache/pip
+python3 -m venv .tools/bootstrap && .tools/bootstrap/bin/pip install uv
+.tools/bootstrap/bin/uv venv --seed -p 3.12 backend/venv
+VIRTUAL_ENV=$PWD/backend/venv .tools/bootstrap/bin/uv pip install -r backend/requirements-dev.txt nodeenv
+rm -rf .tools/bootstrap
+
+# Node 22 inside the same venv, with npm/pip caches kept in .tools/
+source backend/venv/bin/activate
+nodeenv -p -n 22.12.0 --prebuilt
+cat >> backend/venv/bin/activate <<EOF
+export npm_config_cache="$PWD/.tools/cache/npm" PIP_CACHE_DIR="$PWD/.tools/cache/pip"
+EOF
+```
+
+From then on, `source backend/venv/bin/activate` gives you Python 3.12, `node` and `npm`. In VS Code, pick `backend/venv/bin/python` as the interpreter.
+
+### Local database
+
+A local Postgres 16 ships with the `pgserver` dev package; its data lives in `.tools/pgdata`. Start it once after every reboot (the first run also creates it):
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+python -c "import pgserver; s = pgserver.get_server('../.tools/pgdata', cleanup_mode=None); s.psql('SELECT 1')"
+python -c "import pgserver; pgserver.get_server('../.tools/pgdata', cleanup_mode=None).psql('CREATE DATABASE campulse;')"  # first time only
 ```
 
-Create `backend/.env` (copy from `.env.example`):
+### Backend
+
+Create `backend/.env` (copy from `.env.example`). For the local database:
 
 ```
-DATABASE_URL=your_neon_connection_string
-JWT_SECRET_KEY=your_secret_key
-DEBUG=False
+DATABASE_URL=postgresql://postgres:@/campulse?host=/absolute/path/to/campus-connect/.tools/pgdata
+DATABASE_SSL=False
+JWT_SECRET_KEY=generate-with: python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 ```bash
+cd backend
 alembic upgrade head        # create / update the database tables
 uvicorn main:app --reload
 # API running at http://localhost:8000
@@ -127,10 +161,9 @@ DEMO_MODE=true DEMO_PASSWORD=pick-one python -m app.db.demo        # wipes every
 python -m app.db.bootstrap_admin tech@jaipur.manipal.edu           # creates or promotes; --revoke to undo
 ```
 
-**Tests** (auth and permissions, against a real Postgres that starts by itself):
+**Tests** (auth and permissions, against a throwaway Postgres that starts by itself):
 
 ```bash
-pip install -r requirements-dev.txt
 pytest
 ```
 
@@ -138,7 +171,7 @@ pytest
 
 ```bash
 cd frontend
-npm install
+npm install                 # with backend/venv active, so the project's Node 22 is used
 ```
 
 Create `frontend/.env` (copy from `.env.example`):
@@ -185,11 +218,34 @@ npm run dev
 | `users`         | One account per person, with its account type |
 | `clubs`         | Club profiles                       |
 | `events`        | Events posted by clubs              |
-| `club_roles`    | A person's roles in a club (member, editor, owner, faculty coordinator) and their status |
+| `club_roles`    | A person's roles in a club (member, working member, editor, owner, faculty coordinator), their status, and for memberships the academic year's end |
+| `club_applications` | Members applying to (or renewing their place on) a club's working team |
+| `club_announcements` / `announcement_comments` / `announcement_reactions` | The working team's updates |
 | `audit_log`     | Who did what, when (governance actions) |
 | `registrations` | User ↔ Event registrations          |
 | `saved_events`  | User saved events                   |
 | `discussions`   | Comments and replies on events      |
 | `notifications` | In-app reply/comment notifications  |
+
+---
+
+## Roadmap
+
+### Next
+
+- **Real club data** — the DSW's audited club list replaces the sample clubs; audit scores, categories and remarks are kept per academic year and visible only to the DSW
+- **Sign in with Microsoft** — MUJ accounts only; sign-up always proves mailbox ownership, one account per email; a password can be added afterwards (so alumni keep access), protected by an email or authenticator-app code
+- **New club requests** — students propose a club; its faculty coordinator confirms, then the DSW approves and the requester becomes the owner
+- **Working-team chat** — one live group chat per club for its working team (WebSockets on our own backend)
+- **Private clubs** — the team or the DSW can hide a club from listings while its page and history stay viewable
+- **Leaving a club** — by request, approved by the DSW
+- **Member benefits** — clubs list perks for their members (no payments yet)
+- **Recommendations** — server-side ranking for "For You" (interests, deadlines, clubs joined, popularity)
+
+### Future updates
+
+- **Payments** — paid event registration and yearly membership fees through a split-payout gateway (e.g. Razorpay Route): the member fee on joining, the rest of the working fee once accepted; club bank-account KYC, orders, webhooks, refunds and a finance ledger; member discounts on paid events
+- **Smarter recommendations** — "students who went to X also went to Y" from registration history
+- **Semantic search** — embedding search over events and clubs with pgvector on Postgres
 
 ---

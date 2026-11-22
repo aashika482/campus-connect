@@ -5,8 +5,11 @@
 #   - a student is on one club's team at a time unless the DSW grants an exception
 #   - a person has at most one pending owner/editor request at a time
 #   - ending a role keeps the row (status "ended") as the club's history
+#   - memberships are yearly: they end on the academic year's last day (31 July)
+#   - working-team applications: owner/editors shortlist and recommend, the faculty coordinator approves;
+#     a club's working_multi_club setting decides whether its working members may work for other clubs too
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select, func
@@ -18,7 +21,9 @@ from app.models.audit import AuditLog
 from app.models.club import Club
 from app.models.membership import (
     ClubRole, ClubRoleKind, ClubRoleStatus, OPEN_STATUSES, STUDENT_TEAM_ROLES,
+    ClubApplication, ApplicationStatus, OPEN_APPLICATION_STATUSES,
 )
+from app.models.notification import Notification
 from app.models.user import User, AccountType
 from app.schemas.event import ClubRoleDetailOut, ClubRolePage
 
@@ -54,15 +59,6 @@ def role_detail(r: ClubRole, u: User, proposer_name: str | None = None) -> ClubR
 
 async def _count(db: AsyncSession, *filters) -> int:
     return (await db.execute(select(func.count()).select_from(ClubRole).where(*filters))).scalar()
-
-
-async def sync_member_count(db: AsyncSession, club: Club) -> int:
-    """Set clubs.member_count to the real number of active members (a recount never drifts)."""
-    club.member_count = await _count(
-        db, ClubRole.club_id == club.id, ClubRole.role == ClubRoleKind.member,
-        ClubRole.status == ClubRoleStatus.active,
-    )
-    return club.member_count
 
 
 # ── Creating requests ────────────────────────────────────
@@ -168,3 +164,121 @@ async def end_roles(db: AsyncSession, user: User, kinds: tuple[ClubRoleKind, ...
         r.reviewed_by, r.reviewed_at = actor.id, _now()
         AuditLog.record(db, actor, "club_role.end" if was_active else "club_role.reject", "club_role", r.id,
                         club=r.club_name, user=user.email, role=r.role.value, reason=reason)
+
+
+# ── Yearly memberships ───────────────────────────────────
+ACADEMIC_YEAR_END = (7, 31)   # month, day: memberships run until 31 July
+
+
+def membership_end(today: date | None = None) -> date:
+    """The last day of the academic year that `today` falls in."""
+    today = today or date.today()
+    end = date(today.year, *ACADEMIC_YEAR_END)
+    return end if today <= end else date(today.year + 1, *ACADEMIC_YEAR_END)
+
+
+def close_lapsed(user: User, club_id: int, kind: ClubRoleKind) -> bool:
+    """Mark this user's lapsed yearly role in the club as ended (it ended with its academic year), so a
+    new year's row can be opened. Returns whether there was one, i.e. this is a renewal."""
+    lapsed = [r for r in user.club_roles if r.club_id == club_id and r.role == kind
+              and r.status == ClubRoleStatus.active and r.is_expired]
+    for r in lapsed:
+        r.status = ClubRoleStatus.ended
+        r.ended_at = datetime.combine(r.expires_on + timedelta(days=1), datetime.min.time(), timezone.utc)
+    return bool(lapsed)
+
+
+# ── Working-team applications ────────────────────────────
+def working_conflict(user: User, club: Club) -> str | None:
+    """Why `user` can't be on `club`'s working team because of working teams elsewhere, if they can't."""
+    others = [r for r in user.roles(ClubRoleKind.working_member) if r.club_id != club.id]
+    if not others:
+        return None
+    if not club.working_multi_club:
+        return (f"{club.name}'s working members can't be on other clubs' working teams, "
+                f"and {user.name} is on {', '.join(r.club_name for r in others)}'s")
+    strict = [r.club_name for r in others if not r.club.working_multi_club]
+    if strict:
+        return f"{', '.join(strict)} doesn't let its working members join other clubs' working teams"
+    return None
+
+
+def lapsed_working_member(user: User, club_id: int) -> bool:
+    """Was on this club's working team in a past academic year (and not ended for another reason)."""
+    return any(r.club_id == club_id and r.role == ClubRoleKind.working_member
+               and r.status == ClubRoleStatus.active and r.is_expired for r in user.club_roles)
+
+
+def application_block(user: User, club: Club, open_app: ClubApplication | None) -> str | None:
+    """Why this user can't apply to the club's working team right now (None: they can)."""
+    if user.account_type != AccountType.student or not user.is_active:
+        return "Only students can apply to a club's working team"
+    if user.is_working_member_of(club.id):
+        return "You're already on the working team"
+    if open_app is not None:
+        return "Your application is being reviewed"
+    if not user.is_member_of(club.id):
+        return "Join the club for this academic year first"
+    if not club.recruiting and not lapsed_working_member(user, club.id):
+        return f"{club.name} isn't recruiting right now"
+    return working_conflict(user, club)
+
+
+def coordinator_ids(club_roles: list[ClubRole]) -> list[int]:
+    return [r.user_id for r in club_roles if r.role == ClubRoleKind.faculty_coordinator and r.is_current]
+
+
+async def act_on_application(db: AsyncSession, app: ClubApplication, club: Club, applicant: User,
+                             actor: User, action: str) -> None:
+    """Owner/editors: shortlist, recommend, decline. A faculty coordinator: approve or decline a
+    recommended one. Approving makes the applicant a working member."""
+    club_team_rows = (await db.execute(select(ClubRole).where(ClubRole.club_id == club.id))).scalars().all()
+    coordinators = coordinator_ids(club_team_rows)
+    is_lead = any(r.club_id == club.id for r in actor.roles(*STUDENT_TEAM_ROLES))
+    is_approver = actor.id in coordinators
+
+    S = ApplicationStatus
+    allowed = {
+        "shortlist": is_lead and app.status == S.applied,
+        "recommend": is_lead and app.status in (S.applied, S.shortlisted),
+        "approve":   is_approver and app.status == S.recommended,
+        "decline":   (is_lead and app.status in (S.applied, S.shortlisted))
+                     or (is_approver and app.status == S.recommended),
+    }[action]
+    if not allowed:
+        if app.status not in OPEN_APPLICATION_STATUSES:
+            raise HTTPException(status_code=400, detail=f"This application is already {app.status.value}")
+        who = ("the faculty coordinator" if action == "approve" or app.status == S.recommended
+               else "the club's owner or editors")
+        raise HTTPException(status_code=403, detail=f"Only {who} can {action} this application now")
+
+    if action == "approve":
+        if not applicant.is_active or applicant.account_type != AccountType.student or not applicant.is_member_of(club.id):
+            raise HTTPException(status_code=409, detail=f"{applicant.name} is no longer a current student member of {club.name}")
+        if conflict := working_conflict(applicant, club):
+            raise HTTPException(status_code=409, detail=conflict)
+        close_lapsed(applicant, club.id, ClubRoleKind.working_member)
+        db.add(ClubRole(user_id=applicant.id, club_id=club.id, role=ClubRoleKind.working_member,
+                        status=ClubRoleStatus.active, expires_on=membership_end(),
+                        proposed_by=app.reviewed_by, reviewed_by=actor.id, reviewed_at=_now()))
+
+    # The coordinator's call on a recommendation is the decision; everything before it is the review
+    if app.status == S.recommended:
+        app.decided_by = actor.id
+    else:
+        app.reviewed_by = actor.id
+    app.status = {"shortlist": S.shortlisted, "recommend": S.recommended,
+                  "approve": S.accepted, "decline": S.declined}[action]
+    AuditLog.record(db, actor, f"application.{action}", "club_application", app.id,
+                    club=club.name, user=applicant.email, renewal=app.is_renewal or None)
+
+    if action == "recommend":
+        Notification.send(db, coordinators, "app_review",
+                          f"{applicant.name} is recommended for {club.name}'s working team. Approve or decline.",
+                          club_id=club.id)
+    elif app.status in (S.shortlisted, S.accepted, S.declined):
+        Notification.send(db, [applicant.id], "application", {
+            S.shortlisted: f"{club.name} shortlisted your working-team application. Expect an interview call.",
+            S.accepted: f"You're on {club.name}'s working team!",
+            S.declined: f"{club.name} didn't take your working-team application this time. You stay a member.",
+        }[app.status], club_id=club.id)

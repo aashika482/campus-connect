@@ -210,6 +210,10 @@ async def unregister_from_event(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
+    event = await get_or_404(db, Event, event_id)
+    # Once the event is over, a registration is attendance history
+    if event.end_date < date.today():
+        raise HTTPException(status_code=400, detail="This event has ended; its registrations can't be cancelled")
     await db.execute(
         delete(Registration).where(Registration.user_id == user.id, Registration.event_id == event_id)
     )

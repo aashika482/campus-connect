@@ -1,12 +1,12 @@
 // People lists, all built on PeopleTable (search + newest/oldest sort + CSV download):
-//  - Club Dashboard tabs: members, per-event registrations, the club's team
+//  - Club Dashboard tabs: members, per-event registrations, the club's team, working-team applications
 //  - the DSW and Platform consoles (GovernancePages.tsx) reuse PeopleTable and the role columns
 import { useState, useEffect } from 'react'
 import { clubsApi, eventsApi, apiError } from '@/api/client'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
 import { activeRoles, ROLE_LABELS } from '@/types'
-import type { Event, Person, Registrant, ClubMember, ClubRoleDetail } from '@/types'
+import type { Event, Person, Registrant, ClubMember, ClubRoleDetail, Application, ApplicationStatus } from '@/types'
 
 const PLACEHOLDER_PHONE = '0000000000'
 
@@ -180,6 +180,10 @@ export function MembersTab({ clubId, clubName, onOpenEvent }: {
       fileName={`${slug(clubName)}-members`}
       emptyText="No members yet. Students join from your club's page."
       columns={[{
+        label: 'Level',
+        csv: r => (r.is_working ? 'Working' : 'Non-working'),
+        cell: r => r.is_working ? <span style={{ color: '#22C55E' }}>Working</span> : <span style={{ color: 'var(--gray2)' }}>Non-working</span>,
+      }, {
         label: 'Registered for',
         width: '24%',
         csv: r => r.registered_events.map(e => e.title).join('; '),
@@ -328,6 +332,133 @@ export function TeamTab({ clubId }: { clubId: number }) {
         fileName={`club-${clubId}-team`}
         emptyText="No team yet."
         columns={[roleColumns.role, roleColumns.status, roleColumns.proposedBy]}
+      />
+    </div>
+  )
+}
+
+
+// ── Applications tab (working team) ───────────────────────
+const APP_STATUS: Record<ApplicationStatus, { label: string; color: string }> = {
+  applied:     { label: 'Applied',                 color: '#EAB308' },
+  shortlisted: { label: 'Shortlisted',             color: '#3B82F6' },
+  recommended: { label: 'Waiting for coordinator', color: '#A855F7' },
+  accepted:    { label: 'Working member',          color: '#22C55E' },
+  declined:    { label: 'Declined',                color: '#EF4444' },
+}
+type AppAction = 'shortlist' | 'recommend' | 'approve' | 'decline'
+
+export function ApplicationsTab({ clubId, clubName, recruiting, onOpenSettings }: {
+  clubId: number
+  clubName: string
+  recruiting: boolean
+  onOpenSettings: () => void
+}) {
+  const { user } = useAuthStore()
+  const { toast } = useToastStore()
+  const [rows, setRows] = useState<Application[]>([])
+  const [status, setStatus] = useState<ApplicationStatus | ''>('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<number | null>(null)
+  const [hasCoordinator, setHasCoordinator] = useState(true)
+  // Owner/editors move applications along; the faculty coordinator approves the recommended ones
+  const isLead = activeRoles(user, 'owner', 'editor').some(r => r.club_id === clubId)
+  const isCoordinator = activeRoles(user, 'faculty_coordinator').some(r => r.club_id === clubId)
+
+  const load = () => {
+    setLoading(true)
+    clubsApi.applications(clubId, status ? { status } : undefined)
+      .then(r => { setRows(r.data.items); setError(null) })
+      .catch(err => setError(apiError(err, 'Failed to load applications')))
+      .finally(() => setLoading(false))
+  }
+  useEffect(load, [clubId, status])
+  useEffect(() => {
+    clubsApi.team(clubId)
+      .then(r => setHasCoordinator(r.data.items.some((x: ClubRoleDetail) => x.role === 'faculty_coordinator' && x.status === 'active')))
+      .catch(() => {})
+  }, [clubId])
+
+  const act = async (row: Application, action: AppAction) => {
+    setBusy(row.id)
+    try {
+      await clubsApi.reviewApplication(clubId, row.id, action)
+      toast({ shortlist: 'Shortlisted', recommend: 'Recommended to the faculty coordinator', approve: `${row.name} is on the working team`, decline: 'Declined' }[action], 'success')
+      load()
+    } catch (err) {
+      toast(apiError(err, 'Could not update the application'), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const actionsFor = (r: Application): AppAction[] =>
+    r.status === 'applied' && isLead ? ['shortlist', 'recommend', 'decline']
+    : r.status === 'shortlisted' && isLead ? ['recommend', 'decline']
+    : r.status === 'recommended' && isCoordinator ? ['approve', 'decline']
+    : []
+
+  const note: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', lineHeight: 1.6 }
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+        <select className="inp" value={status} onChange={e => setStatus(e.target.value as ApplicationStatus | '')}
+          style={{ width: 'auto', fontSize: 12, cursor: 'pointer' }}>
+          <option value="">All applications</option>
+          {(Object.keys(APP_STATUS) as ApplicationStatus[]).map(k => <option key={k} value={k}>{APP_STATUS[k].label}</option>)}
+        </select>
+        <span style={note}>
+          {recruiting ? 'Recruiting is on.' : 'Recruiting is off: only last year\'s working members can apply (renewals).'}{' '}
+          <button onClick={onOpenSettings} style={{ ...note, color: 'var(--orange)', textDecoration: 'underline', textUnderlineOffset: 3 }}>Settings</button>
+        </span>
+      </div>
+      {!hasCoordinator && (
+        <div style={{ ...note, color: '#EAB308', marginBottom: 14 }}>
+          {clubName} has no faculty coordinator yet, so recommended applicants wait until the DSW assigns one.
+        </div>
+      )}
+      <PeopleTable
+        rows={rows}
+        rowKey={r => r.id}
+        loading={loading}
+        error={error}
+        dateOf={r => r.created_at}
+        dateLabel="Applied on"
+        fileName={`${slug(clubName)}-applications`}
+        emptyText="No applications yet."
+        columns={[{
+          label: 'Status',
+          csv: r => APP_STATUS[r.status].label + (r.is_renewal ? ' (renewal)' : ''),
+          cell: r => (
+            <span>
+              <span style={{ color: APP_STATUS[r.status].color }}>{APP_STATUS[r.status].label}</span>
+              {r.is_renewal && <span style={{ color: 'var(--gray2)' }}> · renewal</span>}
+            </span>
+          ),
+        }, {
+          label: 'By',
+          csv: r => [r.reviewed_by_name, r.decided_by_name].filter(Boolean).join(' → '),
+          cell: r => [r.reviewed_by_name, r.decided_by_name].filter(Boolean).join(' → ') || '—',
+        }, {
+          label: 'Action',
+          csv: () => '',
+          cell: r => {
+            const actions = actionsFor(r)
+            if (actions.length === 0) return <span style={{ color: 'var(--gray2)' }}>—</span>
+            return (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {actions.map(a => (
+                  <button key={a} disabled={busy === r.id} onClick={() => act(r, a)}
+                    className={a === 'decline' ? 'btn-g' : 'btn-p'}
+                    style={{ padding: '5px 10px', fontSize: 9.5, letterSpacing: 1, textTransform: 'capitalize' }}>
+                    {a}
+                  </button>
+                ))}
+              </div>
+            )
+          },
+        }]}
       />
     </div>
   )

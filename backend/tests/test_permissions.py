@@ -2,6 +2,9 @@
 account types and the platform admin. One scenario per rule."""
 
 import pytest
+from sqlalchemy import text
+
+from app.db.database import engine
 
 EVENT = dict(title="Hack", description="d", start_date="2030-01-01", end_date="2030-01-02",
              date_display="Jan 1", tags=["tech"])
@@ -178,3 +181,117 @@ async def test_dsw_and_platform_admin_have_separate_powers(client, signup, dsw):
     assert [e["action"] for e in log] == ["user.remove_dsw", "user.grant_dsw"]
     assert (await client.get("/api/admin/audit-log", headers=dsw)).status_code == 200
     assert (await client.get("/api/admin/audit-log", headers=student)).status_code == 403
+
+
+# ── Working teams, yearly memberships, announcements ─────
+@pytest.fixture
+async def coordinator(client, signup, dsw):
+    """Club 1's faculty coordinator."""
+    headers = await signup("rao@jaipur.manipal.edu")
+    await client.post("/api/admin/dsw/clubs/1/faculty", headers=dsw, json={"email": "rao@jaipur.manipal.edu"})
+    return headers
+
+
+async def make_working(client, student, owner, coordinator, club=1):
+    """Join `club`, apply, get recommended by the owner and approved by the coordinator."""
+    await client.post(f"/api/clubs/{club}/join", headers=student)
+    assert (await client.post(f"/api/clubs/{club}/application", headers=student)).status_code == 201
+    app = (await client.get(f"/api/clubs/{club}/applications", headers=owner)).json()["items"][0]["id"]
+    assert (await client.patch(f"/api/clubs/{club}/applications/{app}", headers=owner, json={"action": "recommend"})).status_code == 204
+    assert (await client.patch(f"/api/clubs/{club}/applications/{app}", headers=coordinator, json={"action": "approve"})).status_code == 204
+
+
+async def test_working_team_applications(client, signup, owner, coordinator):
+    student = await signup("asha@muj.manipal.edu")
+    r = await client.post("/api/clubs/1/application", headers=student)
+    assert r.status_code == 400 and "Join the club" in r.json()["detail"]
+    await client.post("/api/clubs/1/join", headers=student)
+    assert "isn't recruiting" in (await client.post("/api/clubs/1/application", headers=student)).json()["detail"]
+    assert (await client.patch("/api/clubs/1/settings", headers=student, json={"recruiting": True})).status_code == 403
+    assert (await client.patch("/api/clubs/1/settings", headers=owner, json={"recruiting": True})).json()["recruiting"]
+
+    assert (await client.post("/api/clubs/1/application", headers=student)).status_code == 201
+    assert (await client.post("/api/clubs/1/application", headers=student)).status_code == 400   # one at a time
+    app = (await client.get("/api/clubs/1/applications", headers=owner)).json()["items"][0]["id"]
+    url = f"/api/clubs/1/applications/{app}"
+    assert (await client.patch(url, headers=coordinator, json={"action": "approve"})).status_code == 403   # not recommended yet
+    assert (await client.patch(url, headers=owner, json={"action": "shortlist"})).status_code == 204
+    assert (await client.patch(url, headers=owner, json={"action": "recommend"})).status_code == 204
+    assert (await client.patch(url, headers=owner, json={"action": "approve"})).status_code == 403   # coordinator's call
+    notes = (await client.get("/api/notifications", headers=coordinator)).json()["items"]
+    assert notes[0]["kind"] == "app_review" and notes[0]["club_id"] == 1
+    assert (await client.patch(url, headers=coordinator, json={"action": "approve"})).status_code == 204
+
+    roles = {x["role"] for x in (await client.get("/api/users/me", headers=student)).json()["club_roles"]}
+    assert roles == {"member", "working_member"}
+    members = (await client.get("/api/clubs/1/members", headers=owner)).json()
+    assert [m["is_working"] for m in members] == [True]
+    # Working members are the team's people, not its managers
+    assert (await client.post("/api/events", headers=student, json={**EVENT, "club_id": 1})).status_code == 403
+
+
+async def test_working_members_one_club_unless_both_allow(client, signup, owner, coordinator, approve, dsw):
+    student = await signup("asha@muj.manipal.edu")
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"recruiting": True})
+    await make_working(client, student, owner, coordinator)
+
+    owner2 = await signup("owner2@muj.manipal.edu")
+    await client.post("/api/clubs/2/owner-request", headers=owner2, json={})
+    await approve()
+    await client.patch("/api/clubs/2/settings", headers=owner2, json={"recruiting": True})
+    await client.post("/api/clubs/2/join", headers=student)
+    r = await client.post("/api/clubs/2/application", headers=student)
+    assert r.status_code == 400 and "other clubs' working teams" in r.json()["detail"]
+    await client.patch("/api/clubs/2/settings", headers=owner2, json={"working_multi_club": True})
+    r = await client.post("/api/clubs/2/application", headers=student)
+    assert r.status_code == 400 and "IEEE Computer Society doesn't let" in r.json()["detail"]   # club 1 still says no
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"working_multi_club": True})
+    assert (await client.post("/api/clubs/2/application", headers=student)).status_code == 201
+
+
+async def test_roster_and_announcements_are_for_the_working_team(client, signup, owner, coordinator):
+    worker = await signup("asha@muj.manipal.edu")
+    supporter = await signup("ravi@muj.manipal.edu")
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"recruiting": True})
+    await make_working(client, worker, owner, coordinator)
+    await client.post("/api/clubs/1/join", headers=supporter)
+
+    names_only = (await client.get("/api/clubs/1/roster", headers=supporter)).json()
+    assert names_only["detailed"] is False and all(p["course"] is None and p["roles"] == [] for p in names_only["items"])
+    detailed = (await client.get("/api/clubs/1/roster", headers=worker)).json()
+    assert detailed["detailed"] is True
+    assert {tuple(sorted(p["roles"])) for p in detailed["items"]} == {
+        ("member", "working_member"), ("member",), ("owner",), ("faculty_coordinator",)}
+    assert "email" not in detailed["items"][0] and "phone" not in detailed["items"][0]
+
+    assert (await client.post("/api/clubs/1/announcements", headers=worker, json={"body": "hi"})).status_code == 403
+    post = (await client.post("/api/clubs/1/announcements", headers=owner, json={"body": "Meeting at 5"})).json()["id"]
+    assert [n["kind"] for n in (await client.get("/api/notifications", headers=worker)).json()["items"]] == ["announcement", "application"]
+    assert (await client.get("/api/notifications", headers=supporter)).json()["items"] == []
+    assert (await client.get("/api/clubs/1/announcements", headers=supporter)).status_code == 403
+
+    base = f"/api/clubs/1/announcements/{post}"
+    assert (await client.post(f"{base}/comments", headers=worker, json={"body": "On it"})).status_code == 201
+    assert (await client.post(f"{base}/reactions", headers=worker, json={"emoji": "👍"})).json() == [{"emoji": "👍", "count": 1, "mine": True}]
+    assert (await client.post(f"{base}/reactions", headers=worker, json={"emoji": "👍"})).json() == []   # toggles off
+    assert (await client.post(f"{base}/reactions", headers=worker, json={"emoji": "💩"})).status_code == 400
+    page = (await client.get("/api/clubs/1/announcements", headers=worker)).json()
+    assert page["total"] == 1 and page["items"][0]["author_title"] == "President"
+    assert [c["body"] for c in page["items"][0]["comments"]] == ["On it"]
+
+
+async def test_memberships_end_with_the_academic_year(client, signup, owner, coordinator):
+    student = await signup("asha@muj.manipal.edu")
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"recruiting": True})
+    await make_working(client, student, owner, coordinator)
+    async with engine.begin() as conn:   # last academic year ended
+        await conn.execute(text("UPDATE club_roles SET expires_on = '2020-07-31' WHERE role IN ('member', 'working_member')"))
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"recruiting": False})
+
+    assert (await client.get("/api/clubs/1")).json()["member_count"] == 0
+    assert (await client.get("/api/users/me", headers=student)).json()["club_roles"] == []
+    assert (await client.get("/api/clubs/1/announcements", headers=student)).status_code == 403
+    r = await client.post("/api/clubs/1/join", headers=student)   # renew the membership
+    assert r.json()["member_count"] == 1
+    mine = (await client.post("/api/clubs/1/application", headers=student)).json()   # renewal, even with recruiting off
+    assert mine["is_renewal"] is True and mine["status"] == "applied"

@@ -3,12 +3,12 @@ import { useAuthStore } from '@/context/authStore'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useEventsWhere, useUserEvents } from '@/hooks/useData'
 import { getEventColor, splitTags, getTimeAgo, teamClubs, initialOf, ALL_TAGS, TAG_COLORS, ROLE_LABELS, ACCOUNT_LABELS } from '@/types'
-import type { Event, Discussion } from '@/types'
+import type { Event, Discussion, Club } from '@/types'
 import { eventsApi, clubsApi, discussionsApi, usersApi, apiError } from '@/api/client'
 import { ImageUpload } from '@/components/ui/ImageUpload'
 import { TabBar } from '@/components/ui/ListControls'
 import { useToastStore } from '@/context/toastStore'
-import { MembersTab, RegistrationsTab, TeamTab } from './AdminPeople'
+import { MembersTab, RegistrationsTab, TeamTab, ApplicationsTab } from './AdminPeople'
 import { workspaces } from '@/components/layout/Nav'
 
 // ── SavedPage ─────────────────────────────────────────────
@@ -801,7 +801,7 @@ function EventForm({ clubId, event, onSuccess, onCancel }: EventFormProps) {
 }
 
 // ── AdminPage ─────────────────────────────────────────────
-type AdminTab = 'overview' | 'members' | 'registrations' | 'team'
+type AdminTab = 'overview' | 'members' | 'applications' | 'registrations' | 'team' | 'settings'
 
 export function AdminPage() {
   const { user } = useAuthStore()
@@ -817,12 +817,13 @@ export function AdminPage() {
   const club = myClubs.find(c => c.id === Number(params.get('club'))) ?? myClubs[0] ?? null
   const clubId = club?.id ?? null
   const myTitle = user?.club_roles.find(r => r.club_id === clubId && r.status === 'active' && r.role !== 'member')
-  const [memberCount, setMemberCount] = useState<number | null>(null)
+  const [clubInfo, setClubInfo] = useState<Club | null>(null)   // counts and settings
+  const memberCount = clubInfo?.member_count ?? null
   const [regCounts, setRegCounts] = useState<Record<number, number>>({})
   const [discussions, setDiscussions] = useState<Discussion[]>([])
 
   // Club, tab (and event, for Registrations) live in the URL: /admin?club=3&tab=registrations&event=12
-  const tab = (['members', 'registrations', 'team'].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as AdminTab
+  const tab = (['members', 'applications', 'registrations', 'team', 'settings'].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as AdminTab
   const tabEventId = Number(params.get('event')) || null
   const goTab = (t: AdminTab, eventId?: number, toClub = clubId) => {
     const next: Record<string, string> = {}
@@ -841,7 +842,7 @@ export function AdminPage() {
 
   useEffect(() => {
     if (clubId === null) return
-    clubsApi.get(clubId).then(r => setMemberCount(r.data.member_count)).catch(() => {})
+    clubsApi.get(clubId).then(r => setClubInfo(r.data)).catch(() => {})
   }, [clubId])
 
   // This club's events (one club: small enough to load in full)
@@ -1014,8 +1015,10 @@ export function AdminPage() {
       <TabBar active={tab} onChange={t => goTab(t)} tabs={[
         { id: 'overview',      label: 'Overview' },
         { id: 'members',       label: `Members${memberCount !== null ? ` (${memberCount})` : ''}` },
+        { id: 'applications',  label: 'Applications' },
         { id: 'registrations', label: 'Registrations' },
         { id: 'team',          label: 'Team' },
+        { id: 'settings',      label: 'Settings' },
       ] as const} />
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 40px' }}>
@@ -1023,6 +1026,13 @@ export function AdminPage() {
         {tab === 'members' && <MembersTab clubId={clubId} clubName={club.name} onOpenEvent={id => goTab('registrations', id)} />}
 
         {tab === 'team' && <TeamTab clubId={clubId} />}
+
+        {tab === 'applications' && (
+          <ApplicationsTab clubId={clubId} clubName={club.name} recruiting={!!clubInfo?.recruiting}
+            onOpenSettings={() => goTab('settings')} />
+        )}
+
+        {tab === 'settings' && clubInfo && <ClubSettings club={clubInfo} onSaved={setClubInfo} />}
 
         {tab === 'registrations' && (
           <RegistrationsTab
@@ -1250,6 +1260,64 @@ export function AdminPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+
+// ── Club settings (Club Dashboard) ───────────────────────
+function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => void }) {
+  const { toast } = useToastStore()
+  const [form, setForm] = useState({
+    recruiting: club.recruiting, working_multi_club: club.working_multi_club,
+    fee_member: String(club.fee_member), fee_working: String(club.fee_working),
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k: keyof typeof form, v: string | boolean) => setForm(f => ({ ...f, [k]: v }))
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const r = await clubsApi.updateSettings(club.id, {
+        ...form, fee_member: Number(form.fee_member), fee_working: Number(form.fee_working),
+      })
+      onSaved(r.data)
+      toast('Settings saved', 'success')
+    } catch (err) {
+      toast(apiError(err, 'Could not save the settings'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const row: React.CSSProperties = { display: 'flex', gap: 14, alignItems: 'flex-start', padding: '18px 0', borderBottom: '1px solid var(--dark3)' }
+  const hint: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--gray2)', marginTop: 4, lineHeight: 1.6 }
+  const label: React.CSSProperties = { fontFamily: 'var(--head)', fontSize: 14, fontWeight: 600 }
+  const toggle = (k: 'recruiting' | 'working_multi_club', title: string, help: string) => (
+    <label style={{ ...row, cursor: 'pointer' }}>
+      <input type="checkbox" checked={form[k]} onChange={e => set(k, e.target.checked)} style={{ marginTop: 3, accentColor: 'var(--orange)' }} />
+      <div><div style={label}>{title}</div><div style={hint}>{help}</div></div>
+    </label>
+  )
+  const fee = (k: 'fee_member' | 'fee_working', title: string, help: string) => (
+    <div style={row}>
+      <div style={{ flex: 1 }}><div style={label}>{title}</div><div style={hint}>{help}</div></div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontFamily: 'var(--mono)', color: 'var(--gray2)' }}>₹</span>
+        <input className="inp" type="number" min={0} value={form[k]} onChange={e => set(k, e.target.value)} style={{ width: 110, fontSize: 13 }} />
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      {toggle('recruiting', 'Recruiting', 'Members can apply to the working team. Turn it off outside hiring season; last year\'s working members can still renew.')}
+      {toggle('working_multi_club', 'Working members may work for other clubs too',
+        'Off: your working members can\'t be on another club\'s working team, and people on one can\'t join yours.')}
+      {fee('fee_member', 'Membership fee (yearly)', 'What every member pays for the academic year.')}
+      {fee('fee_working', 'Working-member fee (yearly)', 'Paid in total by working members: the membership fee first, the rest once accepted.')}
+      <div style={{ ...hint, margin: '14px 0 18px' }}>Fees are shown to students. The portal doesn't collect payments yet.</div>
+      <button className="btn-p" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save settings'}</button>
     </div>
   )
 }

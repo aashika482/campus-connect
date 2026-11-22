@@ -158,7 +158,19 @@ export function useUserEvents() {
     }
   }
 
-  return { registered, saved, toggleSave, register }
+  const unregister = async (event: Event) => {
+    if (!registered.includes(event.id)) return
+    setRegistered(p => p.filter(x => x !== event.id))
+    try {
+      await eventsApi.unregister(event.id)
+      toast(`Registration for ${event.title} cancelled`, 'info')
+    } catch (err) {
+      setRegistered(p => [...p, event.id])
+      toast(apiError(err, 'Could not cancel registration'), 'error')
+    }
+  }
+
+  return { registered, saved, toggleSave, register, unregister }
 }
 
 // ── Clubs ────────────────────────────────────────────────

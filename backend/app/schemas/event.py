@@ -1,8 +1,8 @@
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from typing import Optional, List, Annotated, Generic, Literal, TypeVar
 from datetime import date, datetime
 
-from app.models.membership import ClubRoleKind, ClubRoleStatus
+from app.models.membership import ClubRoleKind, ClubRoleStatus, ApplicationStatus
 from app.models.user import AccountType
 from app.schemas.user import LowerEmail
 
@@ -27,11 +27,23 @@ class ClubOut(BaseModel):
     is_open: bool
     instagram: Optional[str] = None
     linkedin: Optional[str] = None
+    recruiting: bool = False
+    working_multi_club: bool = False
+    fee_member: int = 500
+    fee_working: int = 1000
 
     model_config = {"from_attributes": True}
 
 
 ClubPage = Page[ClubOut]
+
+
+class ClubSettingsUpdate(BaseModel):
+    """The club team's settings. Only the fields sent are changed."""
+    recruiting: Optional[bool] = None
+    working_multi_club: Optional[bool] = None
+    fee_member: Optional[Annotated[int, Field(ge=0, le=100000)]] = None
+    fee_working: Optional[Annotated[int, Field(ge=0, le=100000)]] = None
 
 
 class ClubCreate(BaseModel):
@@ -142,6 +154,7 @@ class EventRef(BaseModel):
 
 class MemberOut(PersonOut):
     joined_at: datetime
+    is_working: bool = False             # on the working team (else a non-working member)
     registered_events: List[EventRef]   # this club's events the member registered for
 
 
@@ -176,6 +189,91 @@ class EditorProposal(BaseModel):
 
 class FacultyAssignment(BaseModel):
     email: LowerEmail                      # a faculty account
+
+
+# ── Working-team applications ────────────────────────────
+class ApplicationOut(PersonOut):
+    id: int
+    club_id: int
+    status: ApplicationStatus
+    is_renewal: bool
+    reviewed_by_name: Optional[str] = None   # last owner/editor to move it along
+    decided_by_name: Optional[str] = None    # the coordinator who approved / declined
+    created_at: datetime
+    updated_at: datetime
+
+
+ApplicationPage = Page[ApplicationOut]
+
+
+class MyApplication(BaseModel):
+    """The signed-in student's latest application to this club (null fields: none yet)."""
+    status: Optional[ApplicationStatus] = None
+    is_renewal: bool = False                 # the open application (or the next one) renews last year's place
+    can_apply: bool = False
+    reason: Optional[str] = None             # why they can't apply right now
+
+
+class ApplicationAction(BaseModel):
+    """Owner/editors: shortlist, recommend or decline. Faculty coordinator: approve or decline a recommendation."""
+    action: Literal["shortlist", "recommend", "approve", "decline"]
+
+
+# ── Roster ───────────────────────────────────────────────
+class RosterEntry(BaseModel):
+    user_id: int
+    name: str
+    # Detailed view only (the club's working team); everyone else sees names
+    course: Optional[str] = None
+    interests: Optional[str] = None
+    roles: List[ClubRoleKind] = []
+    title: Optional[str] = None
+
+
+class Roster(BaseModel):
+    detailed: bool
+    items: List[RosterEntry]
+
+
+# ── Announcements ────────────────────────────────────────
+AnnouncementText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3000)]
+
+
+class AnnouncementIn(BaseModel):
+    body: AnnouncementText
+
+
+class AnnouncementCommentOut(BaseModel):
+    id: int
+    author_id: Optional[int] = None
+    author_name: Optional[str] = None
+    body: str
+    created_at: datetime
+
+
+class ReactionCount(BaseModel):
+    emoji: str
+    count: int
+    mine: bool
+
+
+class AnnouncementOut(BaseModel):
+    id: int
+    club_id: int
+    author_id: Optional[int] = None
+    author_name: Optional[str] = None
+    author_title: Optional[str] = None       # e.g. "President" / "Editor"
+    body: str
+    created_at: datetime
+    reactions: List[ReactionCount]
+    comments: List[AnnouncementCommentOut]
+
+
+AnnouncementPage = Page[AnnouncementOut]
+
+
+class ReactionIn(BaseModel):
+    emoji: str
 
 
 class RoleReview(BaseModel):
@@ -285,7 +383,8 @@ class NotificationOut(BaseModel):
     id: int
     kind: str
     message: str
-    event_id: int
+    event_id: Optional[int] = None
+    club_id: Optional[int] = None
     discussion_id: Optional[int] = None
     is_read: bool
     created_at: datetime

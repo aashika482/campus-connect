@@ -1,7 +1,7 @@
 import re
 from pydantic import AfterValidator, BaseModel, EmailStr, field_validator
 from typing import Annotated, Optional, List
-from datetime import datetime
+from datetime import date, datetime
 from app.models.user import AccountType
 from app.models.membership import ClubRoleKind, ClubRoleStatus
 
@@ -73,6 +73,7 @@ class ClubRoleOut(BaseModel):
     status: ClubRoleStatus
     title: Optional[str] = None
     created_at: datetime
+    expires_on: Optional[date] = None    # yearly memberships: last day of the academic year
 
     model_config = {"from_attributes": True}
 
@@ -94,7 +95,7 @@ class UserOut(BaseModel):
     @field_validator("club_roles", mode="before")
     @classmethod
     def current_roles_only(cls, v):
-        return [r for r in v if getattr(r, "status", None) != ClubRoleStatus.ended]
+        return [r for r in v if getattr(r, "status", None) != ClubRoleStatus.ended and not getattr(r, "is_expired", False)]
 
 
 class UserUpdate(BaseModel):

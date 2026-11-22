@@ -55,8 +55,8 @@ async def clean_db():
         await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
         for id_, name, abbr in CLUBS:
             await conn.execute(text(
-                "INSERT INTO clubs (id, name, abbr, description, color, tags, member_count, is_open) "
-                "VALUES (:id, :name, :abbr, 'd', '#000', 'tech', 0, true)"), {"id": id_, "name": name, "abbr": abbr})
+                "INSERT INTO clubs (id, name, abbr, description, color, tags, is_open) "
+                "VALUES (:id, :name, :abbr, 'd', '#000', 'tech', true)"), {"id": id_, "name": name, "abbr": abbr})
     yield
 
 

@@ -32,5 +32,11 @@ dist/
 # Logs
 *.log
 
+# DSW audit sheets (private scores, faculty emails): imported locally, never committed
+*.xlsx
+
+# Project-local toolchain (Python 3.12, caches, local Postgres data)
+.tools/
+
 # Claude Code (local settings)
 .claude/

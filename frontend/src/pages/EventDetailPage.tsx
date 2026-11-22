@@ -19,12 +19,12 @@ export function EventDetailPage() {
   const location = useLocation()
   const { user } = useAuthStore()
   const { toast } = useToastStore()
-  const { registered, saved, toggleSave, register } = useUserEvents()
+  const { registered, saved, toggleSave, register, unregister } = useUserEvents()
 
   const [event, setEvent] = useState<Event | null>(null)
   const [loading, setLoading] = useState(true)
   const [regCount, setRegCount] = useState(0)
-  const [showConfirm, setShowConfirm] = useState(false)
+  const [showConfirm, setShowConfirm] = useState<'register' | 'cancel' | null>(null)
 
   const [discussions, setDiscussions] = useState<Discussion[]>([])
   const [discTotal, setDiscTotal] = useState(0)          // total top-level comments on the server
@@ -103,10 +103,11 @@ export function EventDetailPage() {
       c.id === id ? fn(c) : { ...c, replies: c.replies.map(r => (r.id === id ? fn(r) : r)) }
     ))
 
-  const handleRegister = async () => {
+  const handleConfirm = async () => {
     if (!event) return
-    setShowConfirm(false)
-    await register(event)
+    const action = showConfirm === 'cancel' ? unregister : register
+    setShowConfirm(null)
+    await action(event)
     eventsApi.registrationCount(eventId).then(r => setRegCount(r.data.count)).catch(() => {})
   }
 
@@ -185,6 +186,7 @@ export function EventDetailPage() {
   const now = new Date()
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const deadlinePassed = !!event.reg_deadline && event.reg_deadline < todayKey
+  const eventEnded = event.end_date < todayKey   // registrations become attendance history
   const hasDetails = event.prize_pool || event.team_size || event.contact_info ||
     (event.registration_fee && event.registration_fee !== 'Free')
 
@@ -484,6 +486,13 @@ export function EventDetailPage() {
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginTop: 3 }}>
                     Your spot is confirmed — see you there.
                   </div>
+                  {!eventEnded && (
+                    <button onClick={() => setShowConfirm('cancel')}
+                      style={{ marginTop: 8, padding: 0, background: 'none', border: 'none', cursor: 'pointer',
+                               fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', textDecoration: 'underline' }}>
+                      Can't make it? Cancel registration
+                    </button>
+                  )}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 28 }}>
@@ -532,7 +541,7 @@ export function EventDetailPage() {
                   </div>
                 )}
                 <button
-                  onClick={() => setShowConfirm(true)}
+                  onClick={() => setShowConfirm('register')}
                   className="btn-p"
                   style={{ padding: '14px 36px', fontSize: 12, borderRadius: 10 }}
                   disabled={!!deadlinePassed}
@@ -695,7 +704,7 @@ export function EventDetailPage() {
           <div
             className="mbg"
             style={{ position: 'absolute', inset: 0 }}
-            onClick={() => setShowConfirm(false)}
+            onClick={() => setShowConfirm(null)}
           />
           <div className="mbox asi" style={{ position: 'relative', padding: '34px 36px', maxWidth: 420, width: '90%' }}>
             {/* Color accent bar */}
@@ -716,18 +725,19 @@ export function EventDetailPage() {
               fontFamily: 'var(--syne)', fontSize: 22, fontWeight: 800,
               letterSpacing: '-0.5px', marginBottom: 14,
             }}>
-              Confirm Registration
+              {showConfirm === 'cancel' ? 'Cancel Registration' : 'Confirm Registration'}
             </h3>
 
             <p style={{
               fontFamily: 'var(--body)', fontSize: 14, color: 'var(--cream3)',
               lineHeight: 1.65, marginBottom: 8,
             }}>
-              You're about to register for{' '}
+              {showConfirm === 'cancel' ? 'You\'re about to give up your spot at' : 'You\'re about to register for'}{' '}
               <strong style={{ color: 'var(--cream)' }}>{event.title}</strong>.
+              {showConfirm === 'cancel' && deadlinePassed && ' Registration has closed, so you won\'t be able to sign up again.'}
             </p>
 
-            {event.registration_fee && event.registration_fee !== 'Free' && (
+            {showConfirm === 'register' && event.registration_fee && event.registration_fee !== 'Free' && (
               <div style={{
                 padding: '9px 14px', borderRadius: 8, marginBottom: 10,
                 background: `${color}0e`, border: `1px solid ${color}28`,
@@ -744,11 +754,11 @@ export function EventDetailPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 12 }}>
-              <button onClick={() => setShowConfirm(false)} className="btn-g" style={{ flex: 1 }}>
-                Cancel
+              <button onClick={() => setShowConfirm(null)} className="btn-g" style={{ flex: 1 }}>
+                {showConfirm === 'cancel' ? 'Keep my spot' : 'Cancel'}
               </button>
-              <button onClick={handleRegister} className="btn-p" style={{ flex: 1 }}>
-                Confirm →
+              <button onClick={handleConfirm} className="btn-p" style={{ flex: 1 }}>
+                {showConfirm === 'cancel' ? 'Yes, cancel' : 'Confirm →'}
               </button>
             </div>
           </div>

@@ -22,14 +22,16 @@ from datetime import date
 from sqlalchemy import select, text
 
 from app.core.config import settings
-from app.core.governance import sync_member_count
+from app.core.governance import membership_end
 from app.core.security import hash_password
 from app.db.database import AsyncSessionLocal, engine
 from app.models.audit import AuditLog
 from app.models.club import Club
 from app.models.discussion import Discussion
 from app.models.event import Event
-from app.models.membership import ClubRole, ClubRoleKind, ClubRoleStatus, Registration, SavedEvent
+from app.models.membership import (
+    ClubRole, ClubRoleKind, ClubRoleStatus, Registration, SavedEvent, ClubApplication, ApplicationStatus, YEARLY_ROLES,
+)
 from app.models.user import User, AccountType
 
 # Everything except clubs
@@ -137,6 +139,8 @@ async def main():
         joined: dict[int, set[int]] = {}   # user id -> clubs they're a member of
 
         def role(u: User, club: Club, kind: ClubRoleKind, status=ClubRoleStatus.active, **extra):
+            if kind in YEARLY_ROLES:
+                extra.setdefault("expires_on", membership_end())
             db.add(ClubRole(user_id=u.id, club_id=club.id, role=kind, status=status, **extra))
             if kind == ClubRoleKind.member:
                 joined.setdefault(u.id, set()).add(club.id)
@@ -144,18 +148,22 @@ async def main():
         # Teams: two faculty coordinators per club; an owner for every club but the last two
         # (their owner requests wait for the DSW); one or two editors; two editor proposals pending
         pool = iter(students)
+        coordinators = {i: faculty[i % len(faculty)] for i in range(len(clubs))}
+        staffed: set[User] = set()   # students holding owner / editor roles
         for i, club in enumerate(clubs):
             for f in {faculty[i % len(faculty)].id: faculty[i % len(faculty)],
                       faculty[(i + 3) % len(faculty)].id: faculty[(i + 3) % len(faculty)]}.values():
                 role(f, club, ClubRoleKind.faculty_coordinator, proposed_by=dsw.id, reviewed_by=dsw.id)
             has_owner = i < len(clubs) - 2
             owner = next(pool)
+            staffed.add(owner)
             role(owner, club, ClubRoleKind.owner, ClubRoleStatus.active if has_owner else ClubRoleStatus.pending,
                  title="President", proposed_by=owner.id, reviewed_by=dsw.id if has_owner else None)
             role(owner, club, ClubRoleKind.member)
             if has_owner:
                 for _ in range(1 + i % 2):
                     editor = next(pool)
+                    staffed.add(editor)
                     role(editor, club, ClubRoleKind.editor, title="Coordinator", proposed_by=owner.id, reviewed_by=dsw.id)
                     role(editor, club, ClubRoleKind.member)
                 if i in (0, 3):
@@ -166,6 +174,22 @@ async def main():
             for club in rnd.sample(clubs, rnd.randint(1, 3)):
                 if club.id not in joined.get(s.id, set()):
                     role(s, club, ClubRoleKind.member)
+
+        # Working teams: each club takes on a few of its plain members; the first two clubs are recruiting,
+        # with applications at every stage
+        for i, club in enumerate(clubs):
+            plain = [s for s in students if club.id in joined.get(s.id, set()) and s not in staffed]
+            rnd.shuffle(plain)
+            for s in plain[:2]:
+                role(s, club, ClubRoleKind.working_member, reviewed_by=coordinators[i].id)
+            if i < 2:
+                club.recruiting = True
+                stages = ("applied", "applied", "shortlisted", "recommended", "declined")
+                applicants = [s for s in students if s not in staffed and s not in plain[:2]][i * 5:(i + 1) * 5]
+                for s, st in zip(applicants, map(ApplicationStatus, stages)):
+                    if club.id not in joined.get(s.id, set()):
+                        role(s, club, ClubRoleKind.member)
+                    db.add(ClubApplication(user_id=s.id, club_id=club.id, status=st))
 
         # Events, re-anchored to today, for the clubs that exist
         by_id = {c.id: c for c in clubs}
@@ -186,7 +210,6 @@ async def main():
         await db.flush()
 
         # Activity: registrations, saves, and questions answered by a faculty coordinator
-        coordinators = {i: faculty[i % len(faculty)] for i in range(len(clubs))}
         club_index = {c.id: i for i, c in enumerate(clubs)}
         for ev in events:
             for s in rnd.sample(students, rnd.randint(4, 18)):
@@ -205,8 +228,6 @@ async def main():
                                       parent_id=question.id, is_official=True))
 
         await db.flush()
-        for club in clubs:
-            await sync_member_count(db, club)
         AuditLog.record(db, None, "demo.reset", "database", None, clubs=len(clubs), events=len(events),
                         students=len(students), faculty=len(faculty))
         await db.commit()

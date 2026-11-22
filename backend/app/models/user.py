@@ -49,8 +49,11 @@ class User(Base):
 
     # ── Permissions: the one place that decides who may do what ──
     def roles(self, *kinds: ClubRoleKind, status: ClubRoleStatus = ClubRoleStatus.active) -> list["ClubRole"]:
-        """This user's club roles with the given status, optionally only of the given kinds."""
-        return [r for r in self.club_roles if r.status == status and (not kinds or r.role in kinds)]
+        """This user's club roles with the given status, optionally only of the given kinds.
+        "active" means current: a yearly membership past its academic year doesn't count."""
+        return [r for r in self.club_roles
+                if r.status == status and (not kinds or r.role in kinds)
+                and not (status == ClubRoleStatus.active and r.is_expired)]
 
     @property
     def team_club_ids(self) -> set[int]:
@@ -67,3 +70,11 @@ class User(Base):
 
     def is_member_of(self, club_id: int) -> bool:
         return any(r.club_id == club_id for r in self.roles(ClubRoleKind.member))
+
+    def is_working_member_of(self, club_id: int) -> bool:
+        return any(r.club_id == club_id for r in self.roles(ClubRoleKind.working_member))
+
+    def on_working_team(self, club_id: int) -> bool:
+        """The club's working team: its owner, editors, faculty coordinators and working members.
+        They see announcements and the detailed roster."""
+        return self.can_manage(club_id) or self.is_working_member_of(club_id)

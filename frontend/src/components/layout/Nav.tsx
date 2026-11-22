@@ -86,7 +86,9 @@ export function Nav({ onViewEvent, onViewClub }: Props) {
       notificationsApi.markRead(n.id).catch(() => {})
     }
     setShowNotif(false)
-    navigate(`/events/${n.event_id}#discussion`)
+    if (n.event_id) navigate(`/events/${n.event_id}#discussion`)
+    else if (n.kind === 'app_review') navigate(`/admin?club=${n.club_id}&tab=applications`)
+    else if (n.club_id) navigate(`/clubs/${n.club_id}${n.kind === 'application' ? '' : '#announcements'}`)
   }
 
   return (

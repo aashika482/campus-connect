@@ -109,6 +109,26 @@ export const clubsApi = {
   team:     (id: number) => api.get(`/clubs/${id}/team`),        // owner, editors, faculty (incl. pending)
   requestOwnership: (id: number, title?: string) => api.post(`/clubs/${id}/owner-request`, { title: title || null }),
   proposeEditor:    (id: number, email: string, title?: string) => api.post(`/clubs/${id}/editors`, { email, title: title || null }),
+  updateSettings:   (id: number, data: object) => api.patch(`/clubs/${id}/settings`, data),
+  applications:     (id: number, params?: object) => api.get(`/clubs/${id}/applications`, { params }),   // { items, total }
+  reviewApplication: (id: number, appId: number, action: 'shortlist' | 'recommend' | 'approve' | 'decline') =>
+                      api.patch(`/clubs/${id}/applications/${appId}`, { action }),
+  // Any signed-in user:
+  roster:        (id: number) => api.get(`/clubs/${id}/roster`),          // { detailed, items }
+  myApplication: (id: number) => api.get(`/clubs/${id}/application`),
+  apply:         (id: number) => api.post(`/clubs/${id}/application`),
+}
+
+// ── Club announcements (the club's working team) ─────────
+export const announcementsApi = {
+  list:          (clubId: number, params?: { before_id?: number; limit?: number }) =>
+                   api.get(`/clubs/${clubId}/announcements`, { params }),   // { items, total }
+  post:          (clubId: number, body: string) => api.post(`/clubs/${clubId}/announcements`, { body }),
+  delete:        (clubId: number, id: number) => api.delete(`/clubs/${clubId}/announcements/${id}`),
+  comment:       (clubId: number, id: number, body: string) => api.post(`/clubs/${clubId}/announcements/${id}/comments`, { body }),
+  deleteComment: (clubId: number, id: number, commentId: number) =>
+                   api.delete(`/clubs/${clubId}/announcements/${id}/comments/${commentId}`),
+  react:         (clubId: number, id: number, emoji: string) => api.post(`/clubs/${clubId}/announcements/${id}/reactions`, { emoji }),
 }
 
 // ── Users ────────────────────────────────────────────────
