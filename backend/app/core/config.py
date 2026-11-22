@@ -1,5 +1,8 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from datetime import date, datetime
 from typing import List, Literal
+from zoneinfo import ZoneInfo
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _csv(value: str) -> List[str]:
@@ -43,6 +46,24 @@ class Settings(BaseSettings):
     DEMO_MODE: bool = False
     DEMO_PASSWORD: str = ""
 
+    # The college's time zone: "today" for deadlines, event endings and the academic year's end
+    TIMEZONE: str = "Asia/Kolkata"
+
+    # Sign in with Microsoft (the university's Microsoft 365). From the app registration the DSW / IT
+    # creates in Microsoft Entra ID: the Application (client) ID and the Directory (tenant) ID (a GUID).
+    # Both empty: the Microsoft button is hidden and only emailed-code sign-up works.
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_TENANT_ID: str = ""
+
+    # Email (sign-up and login codes), e.g. the college's Outlook / Microsoft 365 SMTP:
+    # SMTP_HOST=smtp.office365.com, SMTP_PORT=587, SMTP_USER / SMTP_PASSWORD of a mailbox, MAIL_FROM.
+    # Without SMTP_HOST, codes are printed in the server's log instead (local development only).
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    MAIL_FROM: str = ""
+
     # Cloudinary (signed poster uploads). All three come from the Cloudinary
     # dashboard. The secret stays on the server; if any is missing, uploads are
     # disabled and the poster field falls back to pasting an image URL.
@@ -65,6 +86,10 @@ class Settings(BaseSettings):
         return next((kind for kind, domains in self.email_domains.items() if domain in domains), None)
 
     @property
+    def microsoft_enabled(self) -> bool:
+        return bool(self.MICROSOFT_CLIENT_ID and self.MICROSOFT_TENANT_ID)
+
+    @property
     def cloudinary_enabled(self) -> bool:
         return bool(self.CLOUDINARY_CLOUD_NAME and self.CLOUDINARY_API_KEY and self.CLOUDINARY_API_SECRET)
 
@@ -72,3 +97,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def today() -> date:
+    """Today's date at the college (not the server's: Railway runs in UTC, 5½ hours behind India)."""
+    return datetime.now(ZoneInfo(settings.TIMEZONE)).date()

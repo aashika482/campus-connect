@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.db.database import engine
-from app.api.routes import auth, events, clubs, users, discussions, notifications, uploads, admin, announcements, club_requests
+from app.api.routes import auth, events, clubs, users, discussions, notifications, uploads, admin, announcements, club_requests, chat
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.include_router(users.router,  prefix="/api/users",  tags=["Users"])
 app.include_router(events.router, prefix="/api/events", tags=["Events"])
 app.include_router(clubs.router,  prefix="/api/clubs",  tags=["Clubs"])
 app.include_router(announcements.router, prefix="/api/clubs", tags=["Club announcements"])
+app.include_router(chat.router, prefix="/api/clubs", tags=["Club chat"])
 app.include_router(club_requests.router, prefix="/api/club-requests", tags=["New club requests"])
 app.include_router(discussions.router, prefix="/api/discussions", tags=["Discussions"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])

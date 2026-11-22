@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, Integer, Text, DateTime, Date, ForeignKey, func
+from sqlalchemy import String, Boolean, Text, DateTime, Date, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, date
 
@@ -23,7 +23,6 @@ class Event(Base):
     team_size:    Mapped[str|None]  = mapped_column(String(30))   # "2–4", "Solo", null
     poster_url:   Mapped[str|None]  = mapped_column(String(500))
     is_hot:       Mapped[bool]      = mapped_column(Boolean, default=False)
-    is_published: Mapped[bool]      = mapped_column(Boolean, default=True)
 
     # ── New fields (Phase 1) ─────────────────────────────
     venue:            Mapped[str|None]  = mapped_column(String(200), nullable=True)

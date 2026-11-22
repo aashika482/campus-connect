@@ -3,8 +3,8 @@
 # Keeps every club row (the club data is real). Deletes all users, events, roles,
 # registrations, discussions, notifications and the audit log, then generates:
 #   - a platform admin and a DSW account
-#   - two faculty coordinators per club
-#   - students: most clubs get an owner and editors, a few requests wait for the DSW
+#   - for 16 real clubs (DEMO_CLUBS): two faculty coordinators each, an owner and editors for
+#     most (a few requests wait for the DSW), working members and applications, and the events
 #   - memberships, events (some past, some live, some upcoming), registrations,
 #     saved events and discussions
 # Event dates are re-anchored to today on every run, so demos never show stale dates.
@@ -21,9 +21,10 @@ from datetime import date
 
 from sqlalchemy import select, text
 
-from app.core.config import settings
+from app.core.config import settings, today
 from app.core.governance import membership_end
 from app.core.security import hash_password
+from app.schemas.user import MIN_PASSWORD
 from app.db.database import AsyncSessionLocal, engine
 from app.models.audit import AuditLog
 from app.models.club import Club
@@ -37,6 +38,10 @@ from app.models.user import User, AccountType
 # Everything except clubs
 WIPE = ("TRUNCATE notifications, discussions, saved_events, registrations, club_roles, "
         "audit_log, events, users RESTART IDENTITY CASCADE")
+
+RESET_CLUB_SETTINGS = ("TRUNCATE club_benefits RESTART IDENTITY",
+                       "UPDATE clubs SET is_open = true, is_private = false, recruiting = false, "
+                       "working_multi_club = false, fee_member = 500, fee_working = 1000")
 
 FACULTY = ["Dr. Meenakshi Rao", "Dr. Arvind Sharma", "Dr. Kavita Joshi", "Prof. Rahul Verma",
            "Dr. Sunita Agarwal", "Prof. Imran Khan", "Dr. Neha Kapoor", "Prof. Vikram Singh"]
@@ -60,7 +65,7 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 
 
 def shifted(iso: str | None) -> date | None:
-    return date.today() + (date.fromisoformat(iso) - ANCHOR) if iso else None
+    return today() + (date.fromisoformat(iso) - ANCHOR) if iso else None
 
 
 def date_display(start: date, end: date) -> str:
@@ -102,11 +107,22 @@ DEMO_EVENTS = [
 ]
 
 
+# The demo's events and teams go to these real clubs ("club_id" in DEMO_EVENTS → club name).
+# Every other club is left without a team, as real clubs are until their people sign in.
+DEMO_CLUBS = {
+    1: "IEEE MUJ STUDENT CHAPTER", 2: "The Music Club", 3: "Coreografia", 4: "ACM MUJ STUDENT CHAPTER",
+    5: "Cinefilia - The Dramatics and Filmmaking Society of Manipal University Jaipur", 6: "ROTARACT CLUB",
+    7: "IEEE RAS Student Chapter", 8: "10X CLUB MUJ CHAPTER", 9: "ENACTUS Chapter", 10: "LITMUS",
+    11: "CYBER SPACE", 12: "Aperture", 13: "Olympism Club", 14: "International Relations Council",
+    15: "De Artistry Club", 16: "Enviroclub",
+}
+
+
 async def main():
     if not settings.DEMO_MODE:
         sys.exit("Refusing to run: set DEMO_MODE=true (this wipes every user and event).")
-    if len(settings.DEMO_PASSWORD) < 6:
-        sys.exit("Set DEMO_PASSWORD (at least 6 characters): every demo account signs in with it.")
+    if len(settings.DEMO_PASSWORD) < MIN_PASSWORD:
+        sys.exit(f"Set DEMO_PASSWORD (at least {MIN_PASSWORD} characters): every demo account signs in with it.")
     rnd = random.Random(2026)
     pw = hash_password(settings.DEMO_PASSWORD)   # hashed once: bcrypt per account would take ~15s
     student_domain = settings.email_domains["student"][0]
@@ -114,9 +130,16 @@ async def main():
 
     async with AsyncSessionLocal() as db:
         await db.execute(text(WIPE))
-        clubs = list((await db.execute(select(Club).order_by(Club.id))).scalars().all())
-        if not clubs:
-            sys.exit("No clubs in the database. Run python -m app.db.seed first.")
+        # Clubs keep their profiles (real data); the settings and perks a demo or a tester changed reset
+        for statement in RESET_CLUB_SETTINGS:
+            await db.execute(text(statement))
+        by_name = {c.name: c for c in (await db.execute(select(Club).order_by(Club.id))).scalars().all()}
+        if not by_name:
+            sys.exit("No clubs in the database. Run python -m app.db.import_clubs first.")
+        by_id = {i: by_name[n] for i, n in DEMO_CLUBS.items() if n in by_name}
+        if len(by_id) < 4:
+            sys.exit("The demo needs the real club list. Run python -m app.db.import_clubs first.")
+        clubs = list(by_id.values())
 
         def account(name: str, email: str, kind: AccountType, **extra) -> User:
             u = User(name=name, email=email, password=pw, account_type=kind,
@@ -192,7 +215,6 @@ async def main():
                     db.add(ClubApplication(user_id=s.id, club_id=club.id, status=st))
 
         # Events, re-anchored to today, for the clubs that exist
-        by_id = {c.id: c for c in clubs}
         events = []
         for e in DEMO_EVENTS:
             club = by_id.get(e["club_id"])
@@ -234,7 +256,7 @@ async def main():
 
     await engine.dispose()
     print(f"OK: demo data for {len(clubs)} clubs: {len(events)} events, {len(students)} students, {len(faculty)} faculty.")
-    print(f"Every account's password is the DEMO_PASSWORD you set. Try:")
+    print("Every account's password is the DEMO_PASSWORD you set. Try:")
     print(f"  platform admin  tech@{staff_domain}")
     print(f"  DSW             dsw@{staff_domain}")
     print(f"  faculty         {faculty[0].email}")

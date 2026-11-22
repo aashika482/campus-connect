@@ -38,3 +38,14 @@ class AnnouncementReaction(Base):
     announcement_id: Mapped[int] = mapped_column(ForeignKey("club_announcements.id", ondelete="CASCADE"), index=True)
     user_id:         Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     emoji:           Mapped[str] = mapped_column(String(8))
+
+
+class ChatMessage(Base):
+    """One message in a club's working-team chat (live over a WebSocket, kept here as history)."""
+    __tablename__ = "chat_messages"
+
+    id:         Mapped[int]        = mapped_column(primary_key=True)
+    club_id:    Mapped[int]        = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), index=True)
+    author_id:  Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    body:       Mapped[str]        = mapped_column(Text)
+    created_at: Mapped[datetime]   = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, Date, Enum, Integer, Text, DateTime, ForeignKey, func, select
+from sqlalchemy import String, Boolean, Date, Enum, Float, Integer, Text, DateTime, ForeignKey, UniqueConstraint, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship, column_property
 from datetime import date, datetime
 import enum
@@ -16,7 +16,7 @@ class Club(Base):
     description: Mapped[str]  = mapped_column(Text)
     color:       Mapped[str]  = mapped_column(String(10), default="#D4561A")
     tags:        Mapped[str]  = mapped_column(String(300))   # comma-separated
-    is_open:     Mapped[bool] = mapped_column(Boolean, default=True)
+    is_open:     Mapped[bool] = mapped_column(Boolean, default=True)    # taking new members (the team's switch)
 
     # Social links
     instagram:   Mapped[str | None] = mapped_column(String(200))
@@ -104,3 +104,36 @@ class ClubRequest(Base):
     club_id:        Mapped[int | None] = mapped_column(ForeignKey("clubs.id", ondelete="SET NULL"), nullable=True)
     created_at:     Mapped[datetime]   = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at:     Mapped[datetime]   = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ClubEvaluation(Base):
+    """The DSW's yearly audit of a club (imported from the audit sheet). Visible to the DSW only."""
+    __tablename__ = "club_evaluations"
+    __table_args__ = (UniqueConstraint("club_id", "year", name="uq_club_evaluation_year"),)
+
+    id:          Mapped[int]          = mapped_column(primary_key=True)
+    club_id:     Mapped[int]          = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), index=True)
+    year:        Mapped[str]          = mapped_column(String(9))          # academic year, e.g. "2024-25"
+    category:    Mapped[str]          = mapped_column(String(20))         # Platinum / Gold / Silver / Bronze / White / Black
+    # Marks out of 30 / 20 / 20 / 20 / 10, and the total out of 100 (blank cells count as 0)
+    quality_of_events:   Mapped[float] = mapped_column(Float, default=0)
+    sponsorship:         Mapped[float] = mapped_column(Float, default=0)
+    student_engagement:  Mapped[float] = mapped_column(Float, default=0)
+    dsw_component:       Mapped[float] = mapped_column(Float, default=0)
+    faculty_component:   Mapped[float] = mapped_column(Float, default=0)
+    total:               Mapped[float] = mapped_column(Float, default=0)
+    remarks:     Mapped[str | None]   = mapped_column(Text, nullable=True)
+    created_at:  Mapped[datetime]     = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CoordinatorInvite(Base):
+    """A faculty email the DSW's records name as a club's coordinator. When that person signs in with
+    a verified college account, they become the club's faculty coordinator (claimed_at is set)."""
+    __tablename__ = "coordinator_invites"
+    __table_args__ = (UniqueConstraint("club_id", "email", name="uq_coordinator_invite"),)
+
+    id:         Mapped[int]              = mapped_column(primary_key=True)
+    club_id:    Mapped[int]              = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), index=True)
+    email:      Mapped[str]              = mapped_column(String(255), index=True)   # lowercase
+    created_at: Mapped[datetime]         = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claimed_at: Mapped[datetime | None]  = mapped_column(DateTime(timezone=True), nullable=True)

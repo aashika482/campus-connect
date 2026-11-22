@@ -1,8 +1,9 @@
-from sqlalchemy import Boolean, Date, Enum, ForeignKey, DateTime, Index, String, UniqueConstraint, and_, func, or_, text
+from sqlalchemy import Boolean, Date, Enum, ForeignKey, DateTime, Index, String, UniqueConstraint, and_, cast, func, or_, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import date, datetime
 import enum
 
+from app.core.config import settings, today
 from app.db.database import Base
 
 
@@ -84,7 +85,7 @@ class ClubRole(Base):
 
     @property
     def is_expired(self) -> bool:
-        return self.expires_on is not None and self.expires_on < date.today()
+        return self.expires_on is not None and self.expires_on < today()
 
     @property
     def is_current(self) -> bool:
@@ -92,9 +93,12 @@ class ClubRole(Base):
         return self.status == ClubRoleStatus.active and not self.is_expired
 
 
+# Today at the college, computed by Postgres (its own clock is UTC on Neon)
+SQL_TODAY = cast(func.timezone(settings.TIMEZONE, func.now()), Date)
+
 # The SQL twin of ClubRole.is_current, for queries
 CURRENT = and_(ClubRole.status == ClubRoleStatus.active,
-               or_(ClubRole.expires_on.is_(None), ClubRole.expires_on >= func.current_date()))
+               or_(ClubRole.expires_on.is_(None), ClubRole.expires_on >= SQL_TODAY))
 
 
 class ApplicationStatus(str, enum.Enum):

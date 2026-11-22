@@ -16,7 +16,7 @@ from app.core.deps import get_or_404, require_account, require_dsw, require_plat
 from app.core.governance import assign_faculty, end_roles, review_leave, review_role, role_detail, role_page
 from app.db.database import get_db
 from app.models.audit import AuditLog
-from app.models.club import Club
+from app.models.club import Club, ClubEvaluation, CoordinatorInvite
 from app.models.event import Event
 from app.models.membership import (
     ClubRole, ClubRoleKind, ClubRoleStatus, STUDENT_TEAM_ROLES, TEAM_ROLES, LeaveRequest, LeaveStatus,
@@ -25,7 +25,7 @@ from app.models.user import User, AccountType
 from app.schemas.event import (
     AccountOut, AccountPage, AccountTypeUpdate, AuditLogOut, AuditLogPage, ClubRoleDetailOut,
     ClubRolePage, DswAccountGrant, EventOut, FacultyAssignment, HotUpdate, RoleReview,
-    LeaveRequestOut, LeaveRequestPage, LeaveReview,
+    LeaveRequestOut, LeaveRequestPage, LeaveReview, EvaluationOut, EvaluationList,
 )
 
 router = APIRouter()
@@ -84,6 +84,43 @@ async def review_club_role(
     await review_role(db, row, target, payload.action, dsw, payload.multi_club_exception)
     await db.commit()
     return role_detail(row, target)
+
+
+# ── DSW: club evaluations ────────────────────────────────
+@router.get("/dsw/evaluations", response_model=EvaluationList)
+async def club_evaluations(
+    year: Optional[str] = Query(None, description="Academic year, e.g. 2024-25 (default: the latest)"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_dsw),
+):
+    """Every club's audit for one academic year, best first, with who coordinates it (or is invited to)."""
+    years = list((await db.execute(select(ClubEvaluation.year).distinct().order_by(ClubEvaluation.year.desc()))).scalars().all())
+    year = year or (years[0] if years else None)
+    if year is None:
+        return EvaluationList(years=[], items=[])
+    rows = (await db.execute(
+        select(ClubEvaluation, Club.name).join(Club, Club.id == ClubEvaluation.club_id)
+        .where(ClubEvaluation.year == year).order_by(ClubEvaluation.total.desc(), Club.name)
+    )).all()
+    coordinators: dict[int, list[str]] = {}
+    for club_id, name in (await db.execute(
+        select(ClubRole.club_id, User.name).join(User, User.id == ClubRole.user_id)
+        .where(ClubRole.role == ClubRoleKind.faculty_coordinator, ClubRole.status == ClubRoleStatus.active)
+    )).all():
+        coordinators.setdefault(club_id, []).append(name)
+    invited: dict[int, list[str]] = {}
+    for club_id, email in (await db.execute(
+        select(CoordinatorInvite.club_id, CoordinatorInvite.email).where(CoordinatorInvite.claimed_at.is_(None))
+    )).all():
+        invited.setdefault(club_id, []).append(email)
+    return EvaluationList(years=years, items=[
+        EvaluationOut(club_id=e.club_id, club_name=name, year=e.year, category=e.category,
+                      quality_of_events=e.quality_of_events, sponsorship=e.sponsorship,
+                      student_engagement=e.student_engagement, dsw_component=e.dsw_component,
+                      faculty_component=e.faculty_component, total=e.total, remarks=e.remarks,
+                      coordinators=coordinators.get(e.club_id, []), invited_coordinators=invited.get(e.club_id, []))
+        for e, name in rows
+    ])
 
 
 # ── DSW: leave requests ──────────────────────────────────
@@ -172,7 +209,7 @@ async def set_account_type(
         raise HTTPException(status_code=403, detail="DSW and platform admin accounts are managed by the tech team")
     old, new = user.account_type, payload.account_type
     if new != AccountType.student:
-        await end_roles(db, user, STUDENT_TEAM_ROLES, dsw, reason=f"account became {new.value}")
+        await end_roles(db, user, (*STUDENT_TEAM_ROLES, ClubRoleKind.working_member), dsw, reason=f"account became {new.value}")
     if new != AccountType.faculty:
         await end_roles(db, user, (ClubRoleKind.faculty_coordinator,), dsw, reason=f"account became {new.value}")
     user.account_type = new

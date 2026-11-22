@@ -2,15 +2,13 @@
 import { useNavigate } from 'react-router-dom'
 import { usePagedClubs, useUserClubs } from '@/hooks/useData'
 import { LoadMore } from '@/components/ui/ListControls'
-import { splitTags } from '@/types'
+import { splitTags, NOT_CATEGORIZED } from '@/types'
 import type { Club } from '@/types'
 
-// onViewClub kept for Nav/GlobalSearch compatibility — ClubsPage itself navigates directly
-interface Props { onViewClub?: (cl: Club) => void }
 
 const PAGE_SIZE = 12
 
-export function ClubsPage({ onViewClub }: Props) {
+export function ClubsPage() {
   const navigate = useNavigate()
   const { clubs, total, loading, loadingMore, loadMore, updateMemberCount } = usePagedClubs({}, PAGE_SIZE)
   const { joinedClubs, canJoin, join } = useUserClubs()
@@ -87,7 +85,8 @@ function ClubCard({ club, delay, isMember, canJoin, onView, onJoin }: {
       </p>
 
       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 16 }}>
-        {tags.map(t => <span key={t} className="tag">{t}</span>)}
+        {tags.length > 0 ? tags.map(t => <span key={t} className="tag">{t}</span>)
+          : <span className="tag" style={{ opacity: 0.6 }}>{NOT_CATEGORIZED}</span>}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

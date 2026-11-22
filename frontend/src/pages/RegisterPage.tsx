@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '@/context/authStore'
-import { authApi, apiError } from '@/api/client'
+import { authApi, usersApi, apiError } from '@/api/client'
 import { useToastStore } from '@/context/toastStore'
+import { MicrosoftButton } from '@/components/ui/MicrosoftButton'
 import { ALL_TAGS } from '@/types'
 
 type Step = 1 | 2   // 1 = details, 2 = interests (students only)
@@ -15,7 +16,8 @@ export function RegisterPage() {
 
   const [step, setStep]   = useState<Step>(1)
   const [interests, setInterests] = useState<string[]>([])
-  const [form, setForm]   = useState({ name: '', email: '', password: '', reg_no: '', course: '', phone: '' })
+  const [form, setForm]   = useState({ name: '', email: '', password: '', reg_no: '', course: '', phone: '', code: '' })
+  const [codeSentTo, setCodeSentTo] = useState<string | null>(null)   // the address the code went to
   const u = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
 
   // Which college domains can sign up comes from the server (env config), never hardcoded here
@@ -33,7 +35,20 @@ export function RegisterPage() {
   const phoneValid = /^\d{10}$/.test(phoneDigits)
   const [phoneTouched, setPhoneTouched] = useState(false)
   const ti = (id: string) => setInterests(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
-  const detailsOk = form.name.trim() && form.password && phoneValid && (kind === 'student' || kind === 'faculty')
+  const emailNow = form.email.trim().toLowerCase()
+  const codeOk = codeSentTo === emailNow && /^\d{6}$/.test(form.code)
+  const detailsOk = form.name.trim() && form.password.length >= 8 && phoneValid && (kind === 'student' || kind === 'faculty') && codeOk
+
+  // Proving the address is theirs: a code goes to it, and comes back with the form
+  const sendCode = async () => {
+    try {
+      await authApi.registerCode(emailNow)
+      setCodeSentTo(emailNow)
+      toast(`Code sent to ${emailNow}`, 'success')
+    } catch (err) {
+      toast(apiError(err, 'Could not send the code'), 'error')
+    }
+  }
 
   const handleSubmit = async () => {
     try {
@@ -85,6 +100,7 @@ export function RegisterPage() {
         {/* Step 1 — details */}
         {step === 1 && (
           <>
+            <MicrosoftButton onSignedIn={() => navigate('/')} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
               {field('name', 'Full Name', { placeholder: 'Your name' })}
               <div>
@@ -92,8 +108,20 @@ export function RegisterPage() {
                 {kind === 'other' && hint(`Use ${allDomains}`, '#EF4444')}
                 {kind === 'student' && hint('Signing up as a student')}
                 {kind === 'faculty' && hint('Signing up as faculty / staff')}
+                {(kind === 'student' || kind === 'faculty') && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <input className="inp" inputMode="numeric" maxLength={6} placeholder="6-digit code from your email" value={form.code}
+                      onChange={e => u('code', e.target.value.replace(/\D/g, ''))} disabled={codeSentTo !== emailNow} style={{ flex: 1 }} />
+                    <button className="btn-g" onClick={sendCode} style={{ padding: '9px 14px', fontSize: 10, whiteSpace: 'nowrap' }}>
+                      {codeSentTo === emailNow ? 'Resend' : 'Send code'}
+                    </button>
+                  </div>
+                )}
               </div>
-              {field('password', 'Password', { placeholder: '••••••••', type: 'password' })}
+              <div>
+                {field('password', 'Password', { placeholder: 'At least 8 characters', type: 'password' })}
+                {form.password && form.password.length < 8 && hint('At least 8 characters', '#EF4444')}
+              </div>
               <div onBlur={() => setPhoneTouched(true)}>
                 {field('phone', 'Phone Number', { placeholder: '98765 43210', type: 'tel' })}
                 {phoneTouched && form.phone && !phoneValid && hint('Enter a valid 10-digit phone number', '#EF4444')}
@@ -143,6 +171,69 @@ export function RegisterPage() {
             </div>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+
+// ── Students who joined with Microsoft: the details Microsoft doesn't give us, once ──
+export function FinishProfilePage() {
+  const { user, setUser, logout } = useAuthStore()
+  const { toast } = useToastStore()
+  const [form, setForm] = useState({ reg_no: user?.reg_no ?? '', course: user?.course ?? '', phone: '' })
+  const [interests, setInterests] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const phoneValid = /^\d{10}$/.test(form.phone.replace(/[\s\-()]/g, '').replace(/^(\+91|0)/, ''))
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const r = await usersApi.update({ ...form, interests })
+      setUser(r.data)
+    } catch (err) {
+      toast(apiError(err, 'Could not save'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const label: React.CSSProperties = { display: 'block', fontSize: 10, fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 3, color: 'var(--gray2)', marginBottom: 5 }
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
+      <div className="asi" style={{ width: '100%', maxWidth: 440 }}>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--orange)', textTransform: 'uppercase', letterSpacing: 4, marginBottom: 9 }}>Welcome, {user?.name}</div>
+        <h2 style={{ fontFamily: 'var(--head)', fontSize: 34, fontWeight: 800, letterSpacing: '-2px', marginBottom: 8 }}>
+          One last step<span style={{ color: 'var(--orange)' }}>.</span>
+        </h2>
+        <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', marginBottom: 20, lineHeight: 1.6 }}>
+          Microsoft gave us your name and email. Clubs also need these, and your interests shape your feed.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div><label style={label}>Reg No.</label><input className="inp" value={form.reg_no} onChange={e => setForm(f => ({ ...f, reg_no: e.target.value }))} placeholder="219301XXX" /></div>
+            <div><label style={label}>Course</label><input className="inp" value={form.course} onChange={e => setForm(f => ({ ...f, course: e.target.value }))} placeholder="B.Tech CSE" /></div>
+          </div>
+          <div><label style={label}>Phone Number</label><input className="inp" type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="98765 43210" /></div>
+          <div>
+            <label style={label}>Interests</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+              {ALL_TAGS.map(t => {
+                const on = interests.includes(t.id)
+                return (
+                  <button key={t.id} onClick={() => setInterests(p => on ? p.filter(x => x !== t.id) : [...p, t.id])}
+                    style={{ padding: '6px 12px', fontSize: 11, fontFamily: 'var(--mono)', border: `1.5px solid ${on ? 'var(--orange)' : 'var(--dark4)'}`, borderRadius: 20, color: on ? 'var(--orange)' : 'var(--gray2)' }}>
+                    {t.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+        <button className="btn-p" style={{ width: '100%', marginTop: 22 }} disabled={saving || !form.reg_no.trim() || !form.course.trim() || !phoneValid} onClick={save}>
+          {saving ? 'Saving…' : 'Continue →'}
+        </button>
+        <button onClick={logout} style={{ width: '100%', marginTop: 12, fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)' }}>Sign out</button>
       </div>
     </div>
   )

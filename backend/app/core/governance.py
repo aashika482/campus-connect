@@ -16,9 +16,9 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.core.config import settings
+from app.core.config import settings, today as local_today
 from app.models.audit import AuditLog
-from app.models.club import Club, ClubRequest, ClubRequestStatus
+from app.models.club import Club, ClubRequest, ClubRequestStatus, CoordinatorInvite
 from app.models.membership import (
     ClubRole, ClubRoleKind, ClubRoleStatus, OPEN_STATUSES, STUDENT_TEAM_ROLES,
     ClubApplication, ApplicationStatus, OPEN_APPLICATION_STATUSES, LeaveRequest, LeaveScope, LeaveStatus,
@@ -175,7 +175,7 @@ ACADEMIC_YEAR_END = (7, 31)   # month, day: memberships run until 31 July
 
 def membership_end(today: date | None = None) -> date:
     """The last day of the academic year that `today` falls in."""
-    today = today or date.today()
+    today = today or local_today()
     end = date(today.year, *ACADEMIC_YEAR_END)
     return end if today <= end else date(today.year + 1, *ACADEMIC_YEAR_END)
 
@@ -206,17 +206,21 @@ def working_conflict(user: User, club: Club) -> str | None:
     return None
 
 
+def lapsed(user: User, club_id: int, kind: ClubRoleKind) -> bool:
+    """Held this yearly role here in a past academic year (and it didn't end for another reason): renewing."""
+    return any(r.club_id == club_id and r.role == kind and r.status == ClubRoleStatus.active and r.is_expired
+               for r in user.club_roles)
+
+
 def lapsed_working_member(user: User, club_id: int) -> bool:
-    """Was on this club's working team in a past academic year (and not ended for another reason)."""
-    return any(r.club_id == club_id and r.role == ClubRoleKind.working_member
-               and r.status == ClubRoleStatus.active and r.is_expired for r in user.club_roles)
+    return lapsed(user, club_id, ClubRoleKind.working_member)
 
 
 def application_block(user: User, club: Club, open_app: ClubApplication | None) -> str | None:
     """Why this user can't apply to the club's working team right now (None: they can)."""
     if user.account_type != AccountType.student or not user.is_active:
         return "Only students can apply to a club's working team"
-    if user.is_working_member_of(club.id):
+    if user.is_working_member_of(club.id) or user.can_manage(club.id):
         return "You're already on the working team"
     if open_app is not None:
         return "Your application is being reviewed"
@@ -388,3 +392,27 @@ async def approve_club_request(db: AsyncSession, req: ClubRequest, requester: Us
     Notification.send(db, [requester.id, coordinator.id], "club_request",
                       f"The DSW approved {club.name}. It's live on the portal.", club_id=club.id)
     return club, skipped
+
+
+# ── Coordinators named in the DSW's records ──────────────
+async def claim_coordinator_invites(db: AsyncSession, user: User) -> list[str]:
+    """Make a faculty member the coordinator of every club the DSW's records name them for.
+    Only call this after their email is verified (Microsoft sign-in or an emailed code).
+    Returns the clubs they now coordinate."""
+    if user.account_type != AccountType.faculty or not user.is_active:
+        return []
+    invites = (await db.execute(select(CoordinatorInvite).where(
+        CoordinatorInvite.email == user.email, CoordinatorInvite.claimed_at.is_(None)))).scalars().all()
+    claimed = []
+    for inv in invites:
+        club = await db.get(Club, inv.club_id)
+        inv.claimed_at = _now()
+        if club is None or any(r.club_id == club.id for r in user.roles(ClubRoleKind.faculty_coordinator)):
+            continue
+        db.add(ClubRole(user_id=user.id, club_id=club.id, role=ClubRoleKind.faculty_coordinator,
+                        status=ClubRoleStatus.active, reviewed_at=_now()))
+        AuditLog.record(db, None, "club_role.claim_coordinator", "club", club.id, club=club.name, user=user.email)
+        Notification.send(db, [user.id], "coordinator", f"You're the faculty coordinator of {club.name}, as the DSW's records name you.",
+                          club_id=club.id)
+        claimed.append(club.name)
+    return claimed

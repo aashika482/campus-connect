@@ -1,4 +1,3 @@
-from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -6,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import aliased
 
+from app.core.config import today
 from app.db.database import get_db
 from app.models.club import Club, ClubBenefit
 from app.models.event import Event
@@ -15,13 +15,13 @@ from app.models.membership import (
     CURRENT, ClubApplication, ApplicationStatus, OPEN_APPLICATION_STATUSES, LeaveRequest, LeaveStatus,
 )
 from app.models.user import User, AccountType
-from app.core.deps import get_or_404, get_current_active_user, get_optional_user, require_dsw, ensure_can_manage
+from app.core.deps import get_or_404, get_current_active_user, get_optional_user, ensure_can_manage
 from app.core.governance import (
-    role_page, role_detail, request_team_role, membership_end, close_lapsed, lapsed_working_member,
+    role_page, role_detail, request_team_role, membership_end, close_lapsed, lapsed, lapsed_working_member,
     application_block, act_on_application, leave_block,
 )
 from app.schemas.event import (
-    ClubOut, ClubPage, ClubCreate, ClubMembershipStatus, MemberOut, EventRef,
+    ClubOut, ClubPage, ClubMembershipStatus, MemberOut, EventRef,
     ClubRoleDetailOut, ClubRolePage, OwnerRequest, EditorProposal, ClubSettingsUpdate,
     ApplicationOut, ApplicationPage, MyApplication, ApplicationAction, Roster, RosterEntry,
     BenefitIn, BenefitOut, LeaveIn, MyLeaveRequest,
@@ -62,24 +62,6 @@ async def get_club(club_id: int, db: AsyncSession = Depends(get_db)):
     return await get_or_404(db, Club, club_id)
 
 
-@router.post("", response_model=ClubOut, status_code=201)
-async def create_club(
-    payload: ClubCreate,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_dsw),
-):
-    """Only the DSW creates clubs; students then request to run them."""
-    if (await db.execute(select(Club.id).where(Club.name == payload.name))).first():
-        raise HTTPException(status_code=400, detail="A club with this name already exists")
-    club = Club(**payload.model_dump(exclude={"tags"}), tags=",".join(payload.tags))
-    db.add(club)
-    await db.flush()
-    AuditLog.record(db, user, "club.create", "club", club.id, name=club.name)
-    await db.commit()
-    await db.refresh(club)
-    return club
-
-
 # ── Membership ───────────────────────────────────────────
 @router.post("/{club_id}/join", response_model=ClubMembershipStatus)
 async def join_club(
@@ -94,6 +76,8 @@ async def join_club(
         raise HTTPException(status_code=403, detail="Only students can join clubs")
     if club.is_private and not user.sees_inside(club_id):
         raise HTTPException(status_code=403, detail=f"{club.name} is private and isn't taking members")
+    if not club.is_open and not user.is_member_of(club_id) and not lapsed(user, club_id, ClubRoleKind.member):
+        raise HTTPException(status_code=403, detail=f"{club.name} isn't taking new members right now")
     if not user.is_member_of(club_id):
         renewal = close_lapsed(user, club_id, ClubRoleKind.member)
         db.add(ClubRole(user_id=user.id, club_id=club_id, role=ClubRoleKind.member,
@@ -206,11 +190,17 @@ async def update_settings(
     if not (user.account_type == AccountType.dsw and set(changes) <= {"is_private"}):
         ensure_can_manage(user, club_id)
     club = await get_or_404(db, Club, club_id)
+    if "tags" in changes:
+        changes["tags"] = ",".join(dict.fromkeys(t.strip() for t in changes["tags"] if t.strip()))
+    for link in ("instagram", "linkedin"):
+        if changes.get(link) == "":
+            changes[link] = None
     for k, v in changes.items():
         setattr(club, k, v)
     if club.fee_working < club.fee_member:
         raise HTTPException(status_code=400, detail="The working-member fee can't be lower than the member fee")
-    AuditLog.record(db, user, "club.settings", "club", club_id, club=club.name, **changes)
+    AuditLog.record(db, user, "club.settings", "club", club_id, club=club.name,
+                    **{k: v for k, v in changes.items() if k != "description"})
     await db.commit()
     await db.refresh(club)
     return club
@@ -353,7 +343,7 @@ async def list_benefits(
         return []
     rows = (await db.execute(
         select(ClubBenefit).where(ClubBenefit.club_id == club_id,
-                                  or_(ClubBenefit.valid_until.is_(None), ClubBenefit.valid_until >= date.today()))
+                                  or_(ClubBenefit.valid_until.is_(None), ClubBenefit.valid_until >= today()))
         .order_by(ClubBenefit.audience, ClubBenefit.id)
     )).scalars().all()
     return rows

@@ -174,7 +174,6 @@ async def test_dsw_and_platform_admin_have_separate_powers(client, signup, dsw):
     # The platform admin has no business authority
     assert (await client.get("/api/admin/dsw/club-roles", headers=tech)).status_code == 403
     assert (await client.patch("/api/admin/dsw/events/1/hot", headers=tech, json={"is_hot": True})).status_code == 403
-    assert (await client.post("/api/clubs", headers=tech, json=dict(name="X", abbr="X", description="d", tags=["t"]))).status_code == 403
 
     # Both read the audit log; nobody else does
     log = (await client.get("/api/admin/audit-log", headers=tech)).json()["items"]
@@ -322,6 +321,12 @@ async def test_private_clubs_hide_from_outsiders(client, signup, owner, dsw):
     assert (await client.post(f"/api/events/{upcoming}/register", headers=outsider)).status_code == 404
     assert (await client.post("/api/clubs/1/join", headers=outsider)).status_code == 403
     assert (await client.get("/api/clubs/1/roster", headers=outsider)).json()["items"] == []
+    # ...nor through the event's discussion, saving it, or its registration count
+    assert (await client.get(f"/api/discussions/{upcoming}", headers=outsider)).status_code == 404
+    assert (await client.post(f"/api/discussions/{upcoming}", headers=outsider, json={"content": "hi"})).status_code == 404
+    assert (await client.post(f"/api/events/{upcoming}/save", headers=outsider)).status_code == 404
+    assert (await client.get(f"/api/events/{upcoming}/registrations/count")).status_code == 404
+    assert (await client.get(f"/api/discussions/{upcoming}", headers=member)).status_code == 200
 
 
 async def test_leaving_needs_the_dsw(client, signup, owner, coordinator, dsw):
@@ -412,3 +417,69 @@ async def test_new_club_requests(client, signup, dsw):
     assert roles((await client.get("/api/users/me", headers=ravi)).json()) == {("editor", club), ("member", club)}
     assert roles((await client.get("/api/users/me", headers=faculty)).json()) == {("faculty_coordinator", club)}
     assert (await client.get(f"/api/clubs/{club}")).json()["member_count"] == 2
+
+
+async def test_working_team_chat(client, signup, owner, coordinator):
+    worker = await signup("asha@muj.manipal.edu")
+    supporter = await signup("ravi@muj.manipal.edu")
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"recruiting": True})
+    await make_working(client, worker, owner, coordinator)
+    await client.post("/api/clubs/1/join", headers=supporter)
+
+    assert (await client.post("/api/clubs/1/chat", headers=supporter, json={"body": "hi"})).status_code == 403
+    assert (await client.get("/api/clubs/1/chat", headers=supporter)).status_code == 403
+    ids = [(await client.post("/api/clubs/1/chat", headers=h, json={"body": b})).json()["id"]
+           for h, b in ((worker, "first"), (coordinator, "second"), (worker, "third"))]
+    page = (await client.get("/api/clubs/1/chat?limit=2", headers=owner)).json()
+    assert [m["body"] for m in page["items"]] == ["second", "third"] and page["has_more"]
+    older = (await client.get(f"/api/clubs/1/chat?before_id={ids[1]}", headers=owner)).json()
+    assert [m["body"] for m in older["items"]] == ["first"] and not older["has_more"]
+    assert [m["body"] for m in (await client.get(f"/api/clubs/1/chat?after_id={ids[0]}", headers=worker)).json()["items"]] == ["second", "third"]
+
+    assert (await client.delete(f"/api/clubs/1/chat/{ids[1]}", headers=worker)).status_code == 403   # not theirs
+    assert (await client.delete(f"/api/clubs/1/chat/{ids[0]}", headers=worker)).status_code == 204   # their own
+    assert (await client.delete(f"/api/clubs/1/chat/{ids[1]}", headers=owner)).status_code == 204    # the owner's call
+
+
+async def test_club_profile_and_dsw_only_evaluations(client, signup, owner, dsw):
+    r = await client.patch("/api/clubs/1/settings", headers=owner,
+                           json={"abbr": "IEEE", "description": "Engineers.", "tags": ["tech", "science"], "instagram": "https://ig/x"})
+    assert (r.json()["abbr"], r.json()["tags"], r.json()["instagram"]) == ("IEEE", "tech,science", "https://ig/x")
+    r = await client.patch("/api/clubs/1/settings", headers=owner, json={"tags": [], "instagram": ""})
+    assert (r.json()["tags"], r.json()["instagram"]) == ("", None)    # not categorized; link cleared
+    assert (await client.patch("/api/clubs/1/settings", headers=dsw, json={"abbr": "X"})).status_code == 403
+    async with engine.begin() as conn:
+        await conn.execute(text("INSERT INTO club_evaluations (club_id, year, category, quality_of_events, sponsorship, "
+                                "student_engagement, dsw_component, faculty_component, total) VALUES (1, '2024-25', 'Gold', 30, 10, 10, 15, 10, 75)"))
+    assert (await client.get("/api/admin/dsw/evaluations", headers=owner)).status_code == 403
+    page = (await client.get("/api/admin/dsw/evaluations", headers=dsw)).json()
+    assert page["years"] == ["2024-25"] and [(e["club_name"], e["category"], e["total"]) for e in page["items"]] == [("IEEE Computer Society", "Gold", 75)]
+
+
+
+async def test_fixes_from_the_audit(client, signup, owner, coordinator, dsw):
+    student = await signup("asha@muj.manipal.edu")
+    # Running the club isn't applying to its working team
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"recruiting": True})
+    await client.post("/api/clubs/1/join", headers=owner)
+    r = await client.post("/api/clubs/1/application", headers=owner)
+    assert r.status_code == 400 and "already on the working team" in r.json()["detail"]
+
+    # A closed club takes no new members
+    assert (await client.patch("/api/clubs/1/settings", headers=owner, json={"is_open": False})).json()["is_open"] is False
+    r = await client.post("/api/clubs/1/join", headers=student)
+    assert r.status_code == 403 and "isn't taking new members" in r.json()["detail"]
+    await client.patch("/api/clubs/1/settings", headers=owner, json={"is_open": True})
+
+    # Graduating also leaves the working team
+    await make_working(client, student, owner, coordinator)
+    me = (await client.get("/api/users/me", headers=student)).json()
+    await client.patch(f"/api/admin/dsw/accounts/{me['id']}", headers=dsw, json={"account_type": "alumni"})
+    assert {x["role"] for x in (await client.get("/api/users/me", headers=student)).json()["club_roles"]} == {"member"}
+
+    # No registering for an event that's over; tags must be real ones
+    past = (await client.post("/api/events", headers=owner, json={**EVENT, "club_id": 1, "start_date": "2020-01-01", "end_date": "2020-01-02"})).json()["id"]
+    r = await client.post(f"/api/events/{past}/register", headers=owner)
+    assert r.status_code == 400 and r.json()["detail"] == "This event has ended"
+    assert (await client.post("/api/events", headers=owner, json={**EVENT, "club_id": 1, "tags": ["made-up"]})).status_code == 422
+    assert (await client.patch("/api/clubs/1/settings", headers=owner, json={"tags": ["made-up"]})).status_code == 422

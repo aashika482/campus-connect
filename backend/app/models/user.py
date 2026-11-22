@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, Enum, DateTime, func
+from sqlalchemy import String, Boolean, Enum, DateTime, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 import enum
@@ -25,7 +25,12 @@ class User(Base):
     id:           Mapped[int]         = mapped_column(primary_key=True, index=True)
     name:         Mapped[str]         = mapped_column(String(120))
     email:        Mapped[str]         = mapped_column(String(255), unique=True, index=True)   # always lowercase
-    password:     Mapped[str]         = mapped_column(String(255))
+    password:     Mapped[str | None]  = mapped_column(String(255), nullable=True)   # bcrypt; None = signs in with Microsoft only
+    # The second step after a password: "email" (a code to their inbox) or "totp" (an authenticator app)
+    second_factor: Mapped[str]        = mapped_column(String(10), default="email", server_default="email")
+    totp_secret:  Mapped[str | None]  = mapped_column(String(64), nullable=True)
+    # Wrong second-step codes since the last correct password: past CODE_TRIES, sign in again
+    failed_codes: Mapped[int]         = mapped_column(Integer, default=0, server_default="0")
     account_type: Mapped[AccountType] = mapped_column(Enum(AccountType), default=AccountType.student)
 
     # Student fields
@@ -46,6 +51,15 @@ class User(Base):
         "ClubRole", foreign_keys="ClubRole.user_id", back_populates="user",
         lazy="selectin", cascade="all, delete-orphan",
     )
+
+    @property
+    def has_password(self) -> bool:
+        return bool(self.password)
+
+    @property
+    def profile_complete(self) -> bool:
+        """Students signing in with Microsoft still owe us these once (faculty owe nothing)."""
+        return self.account_type != AccountType.student or bool(self.reg_no and self.course and self.phone)
 
     # ── Permissions: the one place that decides who may do what ──
     def roles(self, *kinds: ClubRoleKind, status: ClubRoleStatus = ClubRoleStatus.active) -> list["ClubRole"]:
@@ -87,3 +101,18 @@ class User(Base):
         """The club's working team: its owner, editors, faculty coordinators and working members.
         They see announcements and the detailed roster."""
         return self.can_manage(club_id) or self.is_working_member_of(club_id)
+
+
+class EmailCode(Base):
+    """A one-time code emailed to prove someone owns an address: before creating an account
+    ("signup") or as the second step of a password login ("login"). Stored hashed; 10 minutes, 5 tries."""
+    __tablename__ = "email_codes"
+
+    id:         Mapped[int]      = mapped_column(primary_key=True)
+    email:      Mapped[str]      = mapped_column(String(255), index=True)
+    purpose:    Mapped[str]      = mapped_column(String(10))
+    code_hash:  Mapped[str]      = mapped_column(String(64))
+    attempts:   Mapped[int]      = mapped_column(Integer, default=0)
+    used:       Mapped[bool]     = mapped_column(Boolean, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

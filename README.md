@@ -60,15 +60,18 @@ Owners, editors and faculty coordinators are the club's *team*: they post events
 - **Working teams** — while a club is recruiting, members apply; the owner/editors shortlist and recommend after an offline interview, the faculty coordinator approves. Last year's working members renew the same way. A club decides whether its working members may also work for other clubs
 - **Club roster** — everyone sees this year's member names; the working team also sees course, interests and roles (never contact details)
 - **Announcements** — the club's team posts updates for its working team, who react and comment
-- **Club settings** — private/public, recruiting on/off, the multi-club rule, and the yearly fees (default ₹500 member / ₹1000 working)
+- **Team chat** — a live group chat per club for its working team (WebSockets on our own backend; history kept in Postgres)
+- **Club settings** — taking new members (Open/Closed), private/public, recruiting on/off, the multi-club rule, and the yearly fees (default ₹500 member / ₹1000 working)
 - **Private clubs** — hidden from outsiders' listings and search, along with their upcoming events; the page and past events stay viewable. The club's team or the DSW switches it
 - **Leaving a club** — members ask the DSW to leave the working team (staying a member) or the club; the DSW approves or rejects
 - **Member benefits** — perks a club lists for all members or only its working team, shown on the club page
 - **New club requests** — students propose a club (with a founding team and a faculty coordinator); the coordinator confirms (the request waits if they haven't joined yet), then the DSW approves and the club is created with the student as owner and the founding team as editors
+- **Real club data** — the 102 clubs from the DSW's audit; each year's audit (category, marks, remarks) is kept per academic year and visible only to the DSW (DSW Console → Evaluations). Coordinators named in the audit become their club's faculty coordinator when they sign in with their verified college account
+- **Club profiles** — the club's team edits its short name, description, tags (or leaves it "Not categorized"), colour and social links
 - **For You** — upcoming events ranked on the server by interests, clubs you're in, closing deadlines and popularity
 - **DSW console** — review requests, see and end club teams, assign faculty, switch account types, read the activity log
 - **Platform console** — the tech team appoints DSW accounts
-- **Auth** — one sign-up for everyone; the college email's domain makes the account a student or a faculty one
+- **Verified sign-in** — "Sign in with Microsoft" (MUJ accounts; name from the university directory) or sign-up with a code emailed to the college address; one account per email, and the domain makes it a student or faculty account. Password logins take a second step (an emailed code or an authenticator app), remembered per browser for 30 days. Microsoft accounts can add a password (e.g. to keep access as alumni)
 
 ---
 
@@ -83,9 +86,10 @@ campus-connect/
 │   ├── alembic/                 # database migrations
 │   ├── tests/                   # pytest: auth and permissions
 │   └── app/
-│       ├── api/routes/          # auth, users, events, clubs, discussions, notifications, uploads, admin
-│       ├── core/                # config, security (JWT + bcrypt), governance rules
-│       ├── db/                  # async engine + session, seed, demo data, bootstrap_admin
+│       ├── api/routes/          # auth, users, events, clubs, announcements, chat, club_requests,
+│       │                        #   discussions, notifications, uploads, admin
+│       ├── core/                # config, security (JWT, bcrypt, codes), governance rules, mail
+│       ├── db/                  # async engine + session, club import, demo data, bootstrap_admin
 │       ├── models/              # SQLAlchemy models
 │       └── schemas/             # Pydantic schemas
 └── frontend/
@@ -155,10 +159,16 @@ uvicorn main:app --reload
 **Fresh database:** after `alembic upgrade head`, load the real club list, then (optionally) demo data:
 
 ```bash
-python -m app.db.seed                                             # the real clubs (skips if any exist)
+python -m app.db.import_clubs                                     # the 102 real clubs (names, short names, tags)
+python -m app.db.import_clubs AUDIT.xlsx --year 2024-25           # or with the DSW's audit sheet: + that year's
+                                                                  # evaluations and faculty coordinators
 DEMO_MODE=true DEMO_PASSWORD=pick-one python -m app.db.demo        # wipes everything except clubs, adds demo
                                                                    # people, teams and events dated around today
 ```
+
+Signing in with a password asks for a code: without `SMTP_HOST` it's printed in the backend's terminal ("No SMTP_HOST set, so this email was not sent"). Tick "Don't ask again on this browser" to skip it for 30 days.
+
+The audit sheet is private (scores, remarks, faculty emails): keep it out of git (`*.xlsx` is ignored) and share it only with people who need it. Each year's sheet goes through the same command with its `--year`; running it again never duplicates anything, and clubs keep whatever their owners have edited. `--replace` also deletes clubs that aren't in the sheet (without a sheet: not in the real list, e.g. the old sample clubs).
 
 **First platform admin:** only possible from the command line. They then appoint DSW accounts in the web app.
 
@@ -205,8 +215,23 @@ npm run dev
 | `DATABASE_SSL`   | `True` (default, Neon). `False` only for a local Postgres without SSL |
 | `STUDENT_EMAIL_DOMAINS` / `FACULTY_EMAIL_DOMAINS` | Comma-separated college domains allowed to sign up (defaults `muj.manipal.edu` / `jaipur.manipal.edu`) |
 | `MAX_EDITORS_PER_CLUB` | Most active editors per club (default `5`; a club has one owner) |
+| `TIMEZONE` | The college's time zone for "today" (deadlines, event endings, 31 July). Default `Asia/Kolkata` |
 | `DEMO_MODE` / `DEMO_PASSWORD` | Only for `python -m app.db.demo`. Never set `DEMO_MODE` in production |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Signed poster uploads (optional) |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_TENANT_ID` | Sign in with Microsoft (see below). Empty: the button is hidden |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `MAIL_FROM` | Sending sign-up and login codes. Required in production; locally, leave `SMTP_HOST` empty and codes print in the backend terminal |
+
+**Run one backend process.** The team chat keeps its live connections in the process's memory, so the
+start command (`Procfile`) runs a single uvicorn process. Adding `--workers` or more Railway replicas would
+need the chat to share messages between processes (e.g. Postgres `LISTEN/NOTIFY`) first.
+
+### Sign in with Microsoft (for the DSW / IT)
+
+In the Microsoft Entra admin center of the university's tenant: **App registrations → New registration**
+- Supported account types: *Accounts in this organizational directory only*
+- Redirect URI: platform **Single-page application**, `https://<the deployed site>/msal-redirect.html` (and `http://localhost:5173/msal-redirect.html` for local development)
+
+Then set `MICROSOFT_CLIENT_ID` (Application / client ID) and `MICROSOFT_TENANT_ID` (Directory / tenant ID, the GUID) on the backend. The frontend reads them from the backend; it needs nothing extra. The app only needs the default `openid profile email` permissions.
 
 ### Frontend (Vercel)
 
@@ -228,6 +253,9 @@ npm run dev
 | `leave_requests` | Members asking the DSW to leave a club's working team, or the club |
 | `club_benefits` | Perks a club lists for its members or working team |
 | `club_requests` | Students proposing new clubs, with the coordinator's and the DSW's decisions |
+| `chat_messages` | Each club's working-team chat |
+| `club_evaluations` | The DSW's yearly audit of each club (DSW only) |
+| `coordinator_invites` | Faculty the audit names as coordinators, until they sign in |
 | `club_announcements` / `announcement_comments` / `announcement_reactions` | The working team's updates |
 | `audit_log`     | Who did what, when (governance actions) |
 | `registrations` | User ↔ Event registrations          |
@@ -241,9 +269,7 @@ npm run dev
 
 ### Next
 
-- **Real club data** — the DSW's audited club list replaces the sample clubs; audit scores, categories and remarks are kept per academic year and visible only to the DSW
-- **Sign in with Microsoft** — MUJ accounts only; sign-up always proves mailbox ownership, one account per email; a password can be added afterwards (so alumni keep access), protected by an email or authenticator-app code
-- **Working-team chat** — one live group chat per club for its working team (WebSockets on our own backend)
+- **Going live** — Neon, Railway and Vercel; the Microsoft app registration and the college's email service; the final pre-handoff check (build, smoke test of every flow, secrets and `.env.example`)
 
 ### Future updates
 

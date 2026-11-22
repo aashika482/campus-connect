@@ -6,7 +6,7 @@ import { ToastContainer } from '@/components/ui/Toast'
 
 // Pages
 import { LoginPage }    from '@/pages/LoginPage'
-import { RegisterPage } from '@/pages/RegisterPage'
+import { RegisterPage, FinishProfilePage } from '@/pages/RegisterPage'
 import { HomePage }     from '@/pages/HomePage'
 import { EventsPage }   from '@/pages/EventsPage'
 import { ClubsPage }    from '@/pages/ClubsPage'
@@ -22,6 +22,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isInitialized } = useAuthStore()
   if (!isInitialized) return <LoadingScreen />
   if (!user) return <Navigate to="/login" replace />
+  if (!user.profile_complete) return <FinishProfilePage />   // joined with Microsoft: the details it doesn't give us
   return <>{children}</>
 }
 
@@ -81,7 +82,7 @@ export default function App() {
           } />
           <Route path="/clubs" element={
             <ProtectedRoute>
-              <ClubsPage onViewClub={handleViewClub} />
+              <ClubsPage />
             </ProtectedRoute>
           } />
           <Route path="/clubs/new" element={

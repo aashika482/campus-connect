@@ -24,6 +24,10 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 os.environ["STUDENT_EMAIL_DOMAINS"] = "muj.manipal.edu"
 os.environ["FACULTY_EMAIL_DOMAINS"] = "jaipur.manipal.edu"
 os.environ["MAX_EDITORS_PER_CLUB"] = "1"   # small, so the limit is easy to hit
+os.environ["SMTP_HOST"] = ""                # emails land in DEV_OUTBOX, where the tests read codes
+os.environ["MICROSOFT_CLIENT_ID"] = os.environ["MICROSOFT_TENANT_ID"] = ""
+
+import re  # noqa: E402
 
 import httpx  # noqa: E402
 from alembic import command  # noqa: E402
@@ -32,6 +36,7 @@ from sqlalchemy import text  # noqa: E402
 
 from main import app  # noqa: E402
 from app.db.database import engine  # noqa: E402
+from app.core.mail import DEV_OUTBOX  # noqa: E402
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLUBS = [(1, "IEEE Computer Society", "IEEE"), (2, "ACM Student Chapter", "ACM")]
@@ -73,11 +78,24 @@ async def set_account_type(email: str, account_type: str) -> None:
         await conn.execute(text("UPDATE users SET account_type = :t WHERE email = :e"), {"t": account_type, "e": email})
 
 
+def emailed_code(email: str) -> str:
+    """The code in the latest email to this address."""
+    return re.search(r"\b(\d{6})\b", [m for m in DEV_OUTBOX if m["to"] == email][-1]["subject"]).group(1)
+
+
+async def register(client, payload: dict):
+    """Sign up the way the app does: ask for an emailed code, then send it with the details."""
+    r = await client.post("/api/auth/register/code", json={"email": payload["email"]})
+    if r.status_code != 202:
+        return r
+    return await client.post("/api/auth/register", json={**payload, "code": emailed_code(payload["email"].lower())})
+
+
 @pytest.fixture
 def signup(client):
     """signup("asha@muj.manipal.edu") -> auth headers for a new account (optionally retyped)."""
     async def _signup(email: str, account_type: str | None = None) -> dict:
-        r = await client.post("/api/auth/register", json={
+        r = await register(client, {
             "name": email.split("@")[0].title(), "email": email, "password": PASSWORD, "phone": "9876543210",
         })
         assert r.status_code == 201, r.text

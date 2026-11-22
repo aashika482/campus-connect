@@ -5,12 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func, or_
 from typing import Optional
 
+from app.core.config import today
 from app.db.database import get_db
 from app.models.club import Club
 from app.models.event import Event
 from app.models.membership import Registration, SavedEvent
-from app.models.user import User, AccountType
-from app.core.deps import get_or_404, get_current_active_user, get_optional_user, ensure_can_manage
+from app.models.user import User
+from app.core.deps import (
+    get_or_404, get_current_active_user, get_optional_user, ensure_can_manage, visible_events, get_visible_event,
+)
 from app.schemas.event import (
     EventOut, EventPage, EventCreate, EventUpdate, RegistrationStatus, SaveStatus, RegistrantOut,
 )
@@ -40,25 +43,6 @@ def _has_tag(tag: str):
     return wrapped.contains(f",{tag.strip()},", autoescape=True)
 
 
-def _visible_to(user: User | None):
-    """Filter: a private club's upcoming events are only for the people in it (and the DSW).
-    Its past events stay visible to everyone, as the club's history. None: no filter needed."""
-    if user and user.account_type == AccountType.dsw:
-        return None
-    hidden = select(Club.id).where(Club.is_private == True, Club.id.not_in(user.club_ids if user else set()))  # noqa: E712
-    return or_(Event.end_date < date.today(), Event.club_id.not_in(hidden))
-
-
-async def _get_visible_event(db: AsyncSession, event_id: int, user: User | None) -> Event:
-    """The event, or a 404 if it's a private club's upcoming event and this user is outside the club."""
-    event = await get_or_404(db, Event, event_id)
-    if event.end_date >= date.today() and not (user and user.sees_inside(event.club_id)):
-        club = await db.get(Club, event.club_id)
-        if club and club.is_private:
-            raise HTTPException(status_code=404, detail="Event not found")
-    return event
-
-
 def _int_list(raw: str, name: str) -> list[int]:
     try:
         return [int(x) for x in raw.split(",") if x.strip()]
@@ -85,8 +69,8 @@ async def list_events(
 ):
     """Published events by start date (soonest first by default), one page at a time.
     `total` is the number of matching events across all pages (for "Load more" and counts)."""
-    filters = [Event.is_published == True]
-    if (visible := _visible_to(user)) is not None:
+    filters = []
+    if (visible := visible_events(user)) is not None:
         filters.append(visible)
     if tag:
         filters.append(_has_tag(tag))
@@ -105,7 +89,7 @@ async def list_events(
             for col in (Event.title, Event.club_name, Event.description, Event.tags)
         )))
     if upcoming:
-        filters.append(Event.end_date >= date.today())
+        filters.append(Event.end_date >= today())
     # A date range matches every event that overlaps it (multi-day events included)
     if date_from:
         filters.append(Event.end_date >= date_from)
@@ -134,10 +118,10 @@ async def for_you(
       +3 per tag matching their interests, +4 if it's a club they're in,
       +3 / +2 if registration closes within 3 / 7 days, up to +3 for popularity (registrations).
     Events they've already registered for are left out. Signed out: popularity and deadlines only."""
-    today = date.today()
-    filters = [Event.is_published == True, Event.end_date >= today,  # noqa: E712
-               or_(Event.reg_deadline.is_(None), Event.reg_deadline >= today)]
-    if (visible := _visible_to(user)) is not None:
+    now = today()
+    filters = [Event.end_date >= now,
+               or_(Event.reg_deadline.is_(None), Event.reg_deadline >= now)]
+    if (visible := visible_events(user)) is not None:
         filters.append(visible)
     if user:
         filters.append(Event.id.not_in(select(Registration.event_id).where(Registration.user_id == user.id)))
@@ -154,7 +138,7 @@ async def for_you(
         if e.club_id in clubs:
             s += 4
         if e.reg_deadline:
-            days_left = (e.reg_deadline - today).days
+            days_left = (e.reg_deadline - now).days
             s += 3 if days_left <= 3 else 2 if days_left <= 7 else 0
         return s + min(3.0, math.log2(1 + registrations))
 
@@ -165,7 +149,7 @@ async def for_you(
 @router.get("/{event_id}", response_model=EventOut)
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db),
                     user: Optional[User] = Depends(get_optional_user)):
-    return await _get_visible_event(db, event_id, user)
+    return await get_visible_event(db, event_id, user)
 
 
 @router.post("", response_model=EventOut, status_code=201)
@@ -252,9 +236,11 @@ async def register_for_event(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
-    event = await _get_visible_event(db, event_id, user)
+    event = await get_visible_event(db, event_id, user)
+    if event.end_date < today():
+        raise HTTPException(status_code=400, detail="This event has ended")
     # Registration stays open through the deadline day itself (matches the event page)
-    if event.reg_deadline and event.reg_deadline < date.today():
+    if event.reg_deadline and event.reg_deadline < today():
         raise HTTPException(status_code=400, detail="Registration for this event has closed")
     existing = await db.execute(
         select(Registration).where(Registration.user_id == user.id, Registration.event_id == event_id)
@@ -274,7 +260,7 @@ async def unregister_from_event(
 ):
     event = await get_or_404(db, Event, event_id)
     # Once the event is over, a registration is attendance history
-    if event.end_date < date.today():
+    if event.end_date < today():
         raise HTTPException(status_code=400, detail="This event has ended; its registrations can't be cancelled")
     await db.execute(
         delete(Registration).where(Registration.user_id == user.id, Registration.event_id == event_id)
@@ -298,7 +284,9 @@ async def my_registrations(
 async def registration_count(
     event_id: int,
     db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(get_optional_user),
 ):
+    await get_visible_event(db, event_id, user)
     result = await db.execute(
         select(func.count()).select_from(Registration).where(Registration.event_id == event_id)
     )
@@ -336,6 +324,7 @@ async def save_event(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_active_user),
 ):
+    await get_visible_event(db, event_id, user)
     existing = await db.execute(
         select(SavedEvent).where(SavedEvent.user_id == user.id, SavedEvent.event_id == event_id)
     )

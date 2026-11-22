@@ -29,6 +29,9 @@ export interface User {
   phone?: string       // 10 digits; "0000000000" = placeholder on older accounts
   interests?: string   // comma-separated tag ids
   created_at: string
+  has_password: boolean          // false: signs in with Microsoft only
+  second_factor: 'email' | 'totp'
+  profile_complete: boolean      // students who joined with Microsoft still owe reg no, course, phone
   club_roles: ClubRole[]   // current roles: pending, active, rejected
 }
 
@@ -129,6 +132,23 @@ export interface ClubRequest {
   updated_at: string
 }
 
+// ── Club evaluations (the DSW's yearly audit; DSW only) ──
+export interface Evaluation {
+  club_id: number
+  club_name: string
+  year: string
+  category: string
+  quality_of_events: number
+  sponsorship: number
+  student_engagement: number
+  dsw_component: number
+  faculty_component: number
+  total: number
+  remarks: string | null
+  coordinators: string[]
+  invited_coordinators: string[]   // emails who haven't signed in yet
+}
+
 // ── Member benefits ──────────────────────────────────────
 export interface Benefit {
   id: number
@@ -190,6 +210,16 @@ export interface RosterEntry {
 export interface Roster {
   detailed: boolean
   items: RosterEntry[]
+}
+
+// ── Working-team chat ────────────────────────────────────
+export interface ChatMessage {
+  id: number
+  club_id: number
+  author_id: number | null
+  author_name: string | null
+  body: string
+  created_at: string
 }
 
 // ── Announcements (the working team's updates) ───────────
@@ -338,6 +368,8 @@ export const TAG_COLORS: Record<string, string> = {
   music: '#EF4444',     dance: '#F59E0B', photography: '#E879F9',
   art: '#8B5CF6',       robotics: '#06B6D4', film: '#A855F7',
   literature: '#10B981', sports: '#22C55E', social: '#F43F5E',
+  business: '#EAB308',  science: '#0EA5E9', environment: '#16A34A',
+  wellness: '#14B8A6',  culture: '#C2410C', gaming: '#7C3AED', quizzing: '#DB2777',
 }
 
 export const ALL_TAGS = [
@@ -353,7 +385,17 @@ export const ALL_TAGS = [
   { id: 'literature', label: 'Literature' },
   { id: 'sports',     label: 'Sports' },
   { id: 'social',     label: 'Social Impact' },
+  { id: 'business',   label: 'Business & Finance' },
+  { id: 'science',    label: 'Science & Research' },
+  { id: 'environment', label: 'Environment & Sustainability' },
+  { id: 'wellness',   label: 'Health & Wellness' },
+  { id: 'culture',    label: 'Culture & Heritage' },
+  { id: 'gaming',     label: 'Gaming & eSports' },
+  { id: 'quizzing',   label: 'Quizzing & Debate' },
 ]
+
+// A club with no tags yet (its owner picks them)
+export const NOT_CATEGORIZED = 'Not categorized'
 
 // "Dr. Meenakshi Rao" -> "Meenakshi" (titles like Dr. / Prof. are skipped); initialOf -> "M"
 export const firstName = (name: string | undefined): string =>

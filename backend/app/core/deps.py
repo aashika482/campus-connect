@@ -4,10 +4,13 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import today
 from app.core.security import decode_token
 from app.db.database import get_db
+from app.models.club import Club
+from app.models.event import Event
 from app.models.user import User, AccountType
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 bearer_scheme = HTTPBearer()
 optional_bearer = HTTPBearer(auto_error=False)
@@ -79,3 +82,24 @@ def ensure_can_manage(user: User, club_id: int) -> None:
     """403 unless the user is on this club's active team."""
     if not user.can_manage(club_id):
         raise HTTPException(status_code=403, detail="Only this club's team can do this")
+
+
+# ── Private clubs: what outsiders don't see ──────────────
+def visible_events(user: User | None):
+    """Filter: a private club's upcoming events are only for the people in it (and the DSW).
+    Its past events stay visible to everyone, as the club's history. None: no filter needed."""
+    if user and user.account_type == AccountType.dsw:
+        return None
+    hidden = select(Club.id).where(Club.is_private == True, Club.id.not_in(user.club_ids if user else set()))  # noqa: E712
+    return or_(Event.end_date < today(), Event.club_id.not_in(hidden))
+
+
+async def get_visible_event(db: AsyncSession, event_id: int, user: User | None) -> Event:
+    """The event, or a 404 if it's a private club's upcoming event and this user is outside the club.
+    Everything about one event (its page, discussion, saving, registering, counts) goes through this."""
+    event = await get_or_404(db, Event, event_id)
+    if event.end_date >= today() and not (user and user.sees_inside(event.club_id)):
+        club = await db.get(Club, event.club_id)
+        if club and club.is_private:
+            raise HTTPException(status_code=404, detail="Event not found")
+    return event

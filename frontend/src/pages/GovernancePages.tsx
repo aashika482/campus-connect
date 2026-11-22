@@ -15,7 +15,7 @@ import { PeopleTable, Empty, roleColumns, fmtDate } from './AdminPeople'
 import { DswClubRequests } from './ClubRequests'
 import type { Column } from './AdminPeople'
 import { ACCOUNT_LABELS } from '@/types'
-import type { Account, AccountType, AuditEntry, ClubRoleDetail, LeaveRequest, Club } from '@/types'
+import type { Account, AccountType, AuditEntry, ClubRoleDetail, LeaveRequest, Club, Evaluation } from '@/types'
 
 const btn = (color: string): React.CSSProperties => ({
   padding: '4px 10px', fontSize: 10, fontFamily: 'var(--mono)', color, border: `1px solid ${color}55`, borderRadius: 4, whiteSpace: 'nowrap',
@@ -54,6 +54,7 @@ const DSW_TABS = [
   { id: 'clubs',    label: 'New clubs' },
   { id: 'leaving',  label: 'Leave requests' },
   { id: 'teams',    label: 'Club teams' },
+  { id: 'evaluations', label: 'Evaluations' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'activity', label: 'Activity' },
 ] as const
@@ -68,6 +69,7 @@ export function DswPage() {
         : tab === 'clubs' ? <DswClubRequests />
         : tab === 'leaving' ? <LeaveRequests />
         : tab === 'teams' ? <><AssignFaculty /><ClubPrivacy /><RoleList status="active" /></>
+        : tab === 'evaluations' ? <EvaluationsTab />
         : tab === 'accounts' ? <AccountsTab />
         : <ActivityTab />}
     </Console>
@@ -178,13 +180,15 @@ function LeaveRequests() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [status, setStatus] = useState<'pending' | 'approved' | 'rejected'>('pending')   // the queue, or history
 
   useEffect(() => {
-    adminApi.leaveRequests()
-      .then(r => setRows(r.data.items))
+    setLoading(true)
+    adminApi.leaveRequests({ status })
+      .then(r => { setRows(r.data.items); setError(null) })
       .catch(err => setError(apiError(err, 'Failed to load')))
       .finally(() => setLoading(false))
-  }, [])
+  }, [status])
 
   const act = async (r: LeaveRequest, action: 'approve' | 'reject') => {
     setBusyId(r.id)
@@ -199,24 +203,30 @@ function LeaveRequests() {
     }
   }
 
-  return (
+  return (<>
+    <select className="inp" value={status} onChange={e => setStatus(e.target.value as typeof status)}
+      style={{ width: 'auto', fontSize: 12, marginBottom: 14 }}>
+      <option value="pending">Waiting for you</option>
+      <option value="approved">Approved</option>
+      <option value="rejected">Rejected</option>
+    </select>
     <PeopleTable
       rows={rows}
       rowKey={r => r.id}
       academic={false}
       loading={loading}
       error={error}
-      dateOf={r => r.created_at}
-      dateLabel="Requested"
-      fileName="leave-requests"
-      emptyText="No one is waiting to leave a club."
+      dateOf={r => status === 'pending' ? r.created_at : (r.reviewed_at ?? r.created_at)}
+      dateLabel={status === 'pending' ? 'Requested' : 'Decided'}
+      fileName={`leave-requests-${status}`}
+      emptyText={status === 'pending' ? 'No one is waiting to leave a club.' : `No ${status} requests.`}
       columns={[
         { label: 'Club', csv: r => r.club_name, cell: r => <span style={{ color: 'var(--cream)' }}>{r.club_name}</span> },
         { label: 'Wants to leave', csv: r => r.scope, cell: r => r.scope === 'working_team' ? 'The working team (stays a member)' : 'The club' },
         { label: 'Reason', csv: r => r.reason ?? '', cell: r => r.reason || '—' },
         {
           label: 'Action', csv: r => r.status,
-          cell: r => (
+          cell: r => r.status !== 'pending' ? <span style={{ textTransform: 'capitalize' }}>{r.status}</span> : (
             <div style={{ display: 'flex', gap: 6, opacity: busyId === r.id ? 0.5 : 1, pointerEvents: busyId === r.id ? 'none' : 'auto' }}>
               <button onClick={() => act(r, 'approve')} style={btn('#22C55E')}>Approve</button>
               <button onClick={() => act(r, 'reject')} style={btn('#EF4444')}>Reject</button>
@@ -225,6 +235,74 @@ function LeaveRequests() {
         },
       ]}
     />
+  </>)
+}
+
+// The yearly audit of every club (imported from the DSW's sheet): private to the DSW
+const CATEGORY_COLORS: Record<string, string> = {
+  Platinum: '#E5E7EB', Gold: '#EAB308', Silver: '#94A3B8', Bronze: '#C2410C', White: '#F8FAFC', Black: '#6B7280',
+}
+
+function EvaluationsTab() {
+  const [year, setYear] = useState<string | undefined>()
+  const [data, setData] = useState<{ years: string[]; items: Evaluation[] } | null>(null)
+  const [category, setCategory] = useState('')
+  const [query, setQuery] = useState('')
+  useEffect(() => { adminApi.evaluations(year).then(r => setData(r.data)).catch(() => setData({ years: [], items: [] })) }, [year])
+
+  if (!data) return <Empty text="Loading…" />
+  if (data.years.length === 0) return <Empty text="No evaluations yet. Import the audit sheet: python -m app.db.import_clubs SHEET.xlsx --year 2024-25" />
+  const q = query.trim().toLowerCase()
+  const rows = data.items.filter(e => (!category || e.category === category) && (!q || e.club_name.toLowerCase().includes(q)))
+  const categories = [...new Set(data.items.map(e => e.category))]
+  const th: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--gray2)', textTransform: 'uppercase', letterSpacing: 1.2, textAlign: 'left', padding: '10px 10px', borderBottom: '1px solid var(--dark3)', whiteSpace: 'nowrap' }
+  const td: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--cream3)', padding: '10px 10px', borderBottom: '1px solid var(--dark3)', verticalAlign: 'top' }
+  const n = (v: number) => (Number.isInteger(v) ? v : v.toFixed(1))
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+        <select className="inp" value={year ?? data.years[0]} onChange={e => setYear(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+          {data.years.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <select className="inp" value={category} onChange={e => setCategory(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+          <option value="">Every category</option>
+          {categories.map(c => <option key={c} value={c}>{c} ({data.items.filter(e => e.category === c).length})</option>)}
+        </select>
+        <input className="inp" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search clubs…" style={{ width: 240, fontSize: 12 }} />
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>{rows.length} clubs · private to the DSW</span>
+      </div>
+      <div style={{ border: '1px solid var(--dark3)', borderRadius: 12, overflowX: 'auto', background: 'var(--dark2)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+          <thead><tr>
+            {['Club', 'Category', 'Events /30', 'Sponsors /20', 'Engagement /20', 'DSW /20', 'Faculty /10', 'Total', 'Coordinators', 'Remarks']
+              .map(h => <th key={h} style={th}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map(e => (
+              <tr key={e.club_id}>
+                <td style={{ ...td, color: 'var(--cream)', maxWidth: 240 }}>{e.club_name}</td>
+                <td style={{ ...td, color: CATEGORY_COLORS[e.category] ?? 'var(--cream3)' }}>{e.category}</td>
+                <td style={td}>{n(e.quality_of_events)}</td><td style={td}>{n(e.sponsorship)}</td>
+                <td style={td}>{n(e.student_engagement)}</td><td style={td}>{n(e.dsw_component)}</td>
+                <td style={td}>{n(e.faculty_component)}</td>
+                <td style={{ ...td, color: 'var(--cream)', fontWeight: 600 }}>{n(e.total)}</td>
+                <td style={{ ...td, maxWidth: 220 }}>
+                  {e.coordinators.join(', ')}
+                  {e.invited_coordinators.length > 0 && (
+                    <div style={{ color: 'var(--gray2)' }} title="Named in the records; becomes coordinator on signing in">
+                      Invited: {e.invited_coordinators.join(', ')}
+                    </div>
+                  )}
+                  {!e.coordinators.length && !e.invited_coordinators.length && '—'}
+                </td>
+                <td style={{ ...td, maxWidth: 320, whiteSpace: 'pre-wrap' }}>{e.remarks || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 

@@ -200,6 +200,8 @@ export function ProfilePage() {
           </div>
         )}
 
+        <SignInSecurity />
+
         <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
           {links.map(w => (
             <button key={w.path} onClick={() => navigate(w.path)} className="btn-p">
@@ -209,6 +211,92 @@ export function ProfilePage() {
           <button onClick={handleLogout} className="btn-g">Sign Out</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Profile: password and the second step ────────────────
+function SignInSecurity() {
+  const { user, setUser } = useAuthStore()
+  const { toast } = useToastStore()
+  const [pw, setPw] = useState({ current: '', next: '' })
+  const [savingPw, setSavingPw] = useState(false)
+  const [totp, setTotp] = useState<{ secret: string; uri: string } | null>(null)   // being set up
+  const [code, setCode] = useState('')
+  if (!user) return null
+
+  const savePassword = async () => {
+    setSavingPw(true)
+    try {
+      setUser((await usersApi.setPassword(pw.next, pw.current)).data)
+      setPw({ current: '', next: '' })
+      toast(user.has_password ? 'Password changed' : 'Password added. You can now also sign in with it.', 'success')
+    } catch (err) { toast(apiError(err, 'Could not save the password'), 'error') }
+    finally { setSavingPw(false) }
+  }
+  const startTotp = async () => {
+    try { setTotp((await usersApi.totpSetup()).data); setCode('') }
+    catch (err) { toast(apiError(err, 'Could not start'), 'error') }
+  }
+  const confirmTotp = async () => {
+    try {
+      setUser((await usersApi.setSecondStep('totp', totp!.secret, code)).data)
+      setTotp(null)
+      toast('Authenticator app on. You\'ll use its codes after your password.', 'success')
+    } catch (err) { toast(apiError(err, 'That code didn\'t match'), 'error') }
+  }
+  const switchToEmail = async () => {
+    try { setUser((await usersApi.setSecondStep('email')).data); toast('You\'ll get codes by email', 'success') }
+    catch (err) { toast(apiError(err, 'Could not change it'), 'error') }
+  }
+
+  const box: React.CSSProperties = { padding: '18px 20px', border: '1px solid var(--dark3)', borderRadius: 12, background: 'var(--dark2)', marginBottom: 24 }
+  const small: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)', lineHeight: 1.6 }
+  return (
+    <div style={box}>
+      <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--orange)', textTransform: 'uppercase', letterSpacing: 3, marginBottom: 12 }}>Sign-in security</div>
+
+      <div style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 600 }}>{user.has_password ? 'Change password' : 'Add a password'}</div>
+      <div style={small}>
+        {user.has_password ? 'After your password you also enter a code, unless you asked a browser to remember you.'
+          : 'You sign in with Microsoft. Add a password to keep access after your college account closes (e.g. as alumni).'}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+        {user.has_password && <input className="inp" type="password" placeholder="Current password" value={pw.current}
+          onChange={e => setPw(p => ({ ...p, current: e.target.value }))} style={{ width: 200, fontSize: 12 }} />}
+        <input className="inp" type="password" placeholder="New password (8+ characters)" value={pw.next}
+          onChange={e => setPw(p => ({ ...p, next: e.target.value }))} style={{ width: 220, fontSize: 12 }} />
+        <button className="btn-g" disabled={savingPw || pw.next.length < 8 || (user.has_password && !pw.current)} onClick={savePassword}
+          style={{ padding: '9px 14px', fontSize: 10 }}>{savingPw ? 'Saving…' : 'Save'}</button>
+      </div>
+
+      {user.has_password && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 600 }}>Second step</div>
+          <div style={small}>
+            {user.second_factor === 'totp' ? 'Codes from your authenticator app (you can always ask for an emailed code instead).' : `Codes emailed to ${user.email}.`}
+          </div>
+          {totp ? (
+            <div style={{ marginTop: 10 }}>
+              <div style={small}>
+                In Google Authenticator, Microsoft Authenticator or similar, add an account with this key (or open the link on your phone):
+              </div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--cream)', letterSpacing: 2, margin: '8px 0', wordBreak: 'break-all' }}>{totp.secret}</div>
+              <a href={totp.uri} style={{ ...small, color: 'var(--orange)' }}>Open in authenticator app</a>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <input className="inp" inputMode="numeric" maxLength={6} placeholder="Code from the app" value={code}
+                  onChange={e => setCode(e.target.value.replace(/\D/g, ''))} style={{ width: 180, fontSize: 12 }} />
+                <button className="btn-p" disabled={code.length !== 6} onClick={confirmTotp} style={{ padding: '9px 14px', fontSize: 10 }}>Turn on</button>
+                <button className="btn-g" onClick={() => setTotp(null)} style={{ padding: '9px 14px', fontSize: 10 }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button className="btn-g" onClick={user.second_factor === 'totp' ? switchToEmail : startTotp} style={{ marginTop: 10, padding: '9px 14px', fontSize: 10 }}>
+              {user.second_factor === 'totp' ? 'Use emailed codes instead' : 'Use an authenticator app instead'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -1268,8 +1356,12 @@ export function AdminPage() {
 // ── Club settings (Club Dashboard) ───────────────────────
 function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => void }) {
   const { toast } = useToastStore()
+  const [profile, setProfile] = useState({
+    abbr: club.abbr, description: club.description, tags: splitTags(club.tags), color: club.color,
+    instagram: club.instagram ?? '', linkedin: club.linkedin ?? '',
+  })
   const [form, setForm] = useState({
-    is_private: club.is_private, recruiting: club.recruiting, working_multi_club: club.working_multi_club,
+    is_open: club.is_open, is_private: club.is_private, recruiting: club.recruiting, working_multi_club: club.working_multi_club,
     fee_member: String(club.fee_member), fee_working: String(club.fee_working),
   })
   const [saving, setSaving] = useState(false)
@@ -1279,7 +1371,7 @@ function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => voi
     setSaving(true)
     try {
       const r = await clubsApi.updateSettings(club.id, {
-        ...form, fee_member: Number(form.fee_member), fee_working: Number(form.fee_working),
+        ...profile, ...form, fee_member: Number(form.fee_member), fee_working: Number(form.fee_working),
       })
       onSaved(r.data)
       toast('Settings saved', 'success')
@@ -1293,7 +1385,7 @@ function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => voi
   const row: React.CSSProperties = { display: 'flex', gap: 14, alignItems: 'flex-start', padding: '18px 0', borderBottom: '1px solid var(--dark3)' }
   const hint: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--gray2)', marginTop: 4, lineHeight: 1.6 }
   const label: React.CSSProperties = { fontFamily: 'var(--head)', fontSize: 14, fontWeight: 600 }
-  const toggle = (k: 'is_private' | 'recruiting' | 'working_multi_club', title: string, help: string) => (
+  const toggle = (k: 'is_open' | 'is_private' | 'recruiting' | 'working_multi_club', title: string, help: string) => (
     <label style={{ ...row, cursor: 'pointer' }}>
       <input type="checkbox" checked={form[k]} onChange={e => set(k, e.target.checked)} style={{ marginTop: 3, accentColor: 'var(--orange)' }} />
       <div><div style={label}>{title}</div><div style={hint}>{help}</div></div>
@@ -1309,8 +1401,42 @@ function ClubSettings({ club, onSaved }: { club: Club; onSaved: (c: Club) => voi
     </div>
   )
 
+  const toggleTag = (id: string) => setProfile(p => ({
+    ...p, tags: p.tags.includes(id) ? p.tags.filter(t => t !== id) : [...p.tags, id].slice(0, 4),
+  }))
+  const field = (title: string, input: React.ReactNode, help?: string) => (
+    <div style={{ padding: '14px 0', borderBottom: '1px solid var(--dark3)' }}>
+      <div style={label}>{title}</div>{help && <div style={hint}>{help}</div>}
+      <div style={{ marginTop: 8 }}>{input}</div>
+    </div>
+  )
+
   return (
     <div style={{ maxWidth: 640 }}>
+      <div style={{ ...hint, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--orange)' }}>Club profile</div>
+      {field('Short name', <input className="inp" value={profile.abbr} maxLength={20} onChange={e => setProfile(p => ({ ...p, abbr: e.target.value }))} style={{ maxWidth: 220 }} />,
+        'Shown on badges. The full name comes from the DSW\'s records.')}
+      {field('About the club', <textarea className="inp" rows={4} maxLength={3000} value={profile.description} onChange={e => setProfile(p => ({ ...p, description: e.target.value }))} />)}
+      {field('Tags', (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {ALL_TAGS.map(t => (
+            <button key={t.id} onClick={() => toggleTag(t.id)}
+              style={{ padding: '5px 12px', borderRadius: 16, fontSize: 11, fontFamily: 'var(--mono)',
+                       border: `1px solid ${profile.tags.includes(t.id) ? 'var(--orange)' : 'var(--dark4)'}`,
+                       color: profile.tags.includes(t.id) ? 'var(--orange)' : 'var(--gray2)' }}>{t.label}</button>
+          ))}
+        </div>
+      ), 'Up to 4. Students find clubs and get recommendations by these. None picked = "Not categorized".')}
+      {field('Colour', <input type="color" value={profile.color} onChange={e => setProfile(p => ({ ...p, color: e.target.value }))} />)}
+      {field('Instagram / LinkedIn', (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input className="inp" value={profile.instagram} placeholder="https://instagram.com/…" onChange={e => setProfile(p => ({ ...p, instagram: e.target.value }))} style={{ flex: 1, minWidth: 220 }} />
+          <input className="inp" value={profile.linkedin} placeholder="https://linkedin.com/…" onChange={e => setProfile(p => ({ ...p, linkedin: e.target.value }))} style={{ flex: 1, minWidth: 220 }} />
+        </div>
+      ))}
+      <div style={{ ...hint, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--orange)', marginTop: 28 }}>Membership</div>
+      {toggle('is_open', 'Taking new members',
+        'Off: students can\'t join your club for now (the club shows as Closed). Members renewing for a new year still can.')}
       {toggle('is_private', 'Private club',
         'Hidden from club listings and search for outsiders, who also stop seeing your upcoming events and can\'t join. Your page and past events stay visible; members see everything as usual.')}
       {toggle('recruiting', 'Recruiting', 'Members can apply to the working team. Turn it off outside hiring season; last year\'s working members can still renew.')}

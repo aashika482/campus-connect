@@ -85,7 +85,7 @@ export function GlobalSearch({ onClose, onViewEvent, onViewClub }: Props) {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontFamily: 'var(--head)', fontSize: 13, fontWeight: 600, color: 'var(--cream)', marginBottom: 2 }}>{cl.name}</div>
-                      <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>{cl.member_count} members · {splitTags(cl.tags).join(', ')}</div>
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--gray2)' }}>{cl.member_count} members · {splitTags(cl.tags).join(', ') || 'not categorized'}</div>
                     </div>
                     {cl.is_open && <span style={{ fontSize: 9, fontFamily: 'var(--mono)', color: '#10B981', border: '1px solid rgba(16,185,129,0.3)', padding: '2px 6px' }}>Open</span>}
                   </button>

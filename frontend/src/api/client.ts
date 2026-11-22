@@ -1,6 +1,8 @@
 import axios from 'axios'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+// The same server over WebSockets (http → ws, https → wss)
+export const WS_BASE = `${BASE.replace(/^http/, 'ws')}/api`
 
 export const api = axios.create({
   baseURL: `${BASE}/api`,
@@ -75,9 +77,13 @@ export function apiError(err: any, fallback: string): string {
 
 // ── Auth ─────────────────────────────────────────────────
 export const authApi = {
-  config:          ()             => api.get('/auth/config'),   // { email_domains: { student: [...], faculty: [...] } }
-  login:           (data: object) => api.post('/auth/login', data),
-  register:        (data: object) => api.post('/auth/register', data),
+  config:          ()             => api.get('/auth/config'),   // { email_domains, microsoft_client_id, microsoft_tenant_id }
+  login:           (data: object) => api.post('/auth/login', data),           // session, or { second_step, challenge }
+  loginVerify:     (challenge: string, code: string, remember: boolean) => api.post('/auth/login/verify', { challenge, code, remember }),
+  loginEmailCode:  (challenge: string) => api.post('/auth/login/email-code', { challenge }),
+  microsoft:       (idToken: string) => api.post('/auth/microsoft', { id_token: idToken }),
+  registerCode:    (email: string) => api.post('/auth/register/code', { email }),   // emails the sign-up code
+  register:        (data: object) => api.post('/auth/register', data),       // details + that code
   refresh:         (data: object) => api.post('/auth/refresh', data),
   logout:          ()             => api.post('/auth/logout'),
 }
@@ -126,6 +132,14 @@ export const clubsApi = {
                    api.post(`/clubs/${id}/leave`, { scope, reason: reason || null }),
 }
 
+// ── Working-team chat (live updates come over the WebSocket at WS_BASE/clubs/{id}/chat/ws) ──
+export const chatApi = {
+  history: (clubId: number, params?: { before_id?: number; after_id?: number; limit?: number }) =>
+             api.get(`/clubs/${clubId}/chat`, { params }),   // { items (oldest first), has_more }
+  send:    (clubId: number, body: string) => api.post(`/clubs/${clubId}/chat`, { body }),
+  delete:  (clubId: number, id: number) => api.delete(`/clubs/${clubId}/chat/${id}`),
+}
+
 // ── New club requests ────────────────────────────────────
 export const clubRequestsApi = {
   submit: (data: object) => api.post('/club-requests', data),             // a student
@@ -152,6 +166,10 @@ export const announcementsApi = {
 export const usersApi = {
   me:     ()           => api.get('/users/me'),
   update: (data: object) => api.patch('/users/me', data),
+  setPassword:   (newPassword: string, currentPassword?: string) =>
+                   api.post('/users/me/password', { new_password: newPassword, current_password: currentPassword || null }),
+  totpSetup:     () => api.post('/users/me/two-step/totp'),               // { secret, uri }
+  setSecondStep: (method: 'email' | 'totp', secret?: string, code?: string) => api.put('/users/me/two-step', { method, secret, code }),
 }
 
 // ── Admin: DSW office and tech team (paginated lists: { items, total }) ──
@@ -169,6 +187,7 @@ export const adminApi = {
   removeDsw:     (userId: number) => api.delete(`/admin/platform/dsw-accounts/${userId}`),
   auditLog:      (params?: object) => api.get('/admin/audit-log', { params }),
   leaveRequests: (params?: object) => api.get('/admin/dsw/leave-requests', { params }),   // { status }
+  evaluations:   (year?: string) => api.get('/admin/dsw/evaluations', { params: year ? { year } : {} }),   // { years, items }
   decideLeave:   (id: number, action: 'approve' | 'reject') => api.patch(`/admin/dsw/leave-requests/${id}`, { action }),
 }
 

@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from app.models.membership import ClubRoleKind, ClubRoleStatus, ApplicationStatus, LeaveScope, LeaveStatus
 from app.models.user import AccountType
-from app.schemas.user import LowerEmail
+from app.schemas.user import LowerEmail, TagId
 
 T = TypeVar("T")
 
@@ -40,23 +40,20 @@ ClubPage = Page[ClubOut]
 
 
 class ClubSettingsUpdate(BaseModel):
-    """The club team's settings. Only the fields sent are changed. (The DSW may change is_private only.)"""
+    """The club team's settings and profile. Only the fields sent are changed; "" clears a social link.
+    (The DSW may change is_private only. The name is the DSW's records' and isn't edited here.)"""
+    abbr: Optional[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]] = None
+    description: Optional[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=3000)]] = None
+    tags: Optional[Annotated[List[TagId], Field(max_length=4)]] = None    # [] = not categorized
+    color: Optional[Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]] = None
+    instagram: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
+    linkedin: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
+    is_open: Optional[bool] = None           # taking new members
     is_private: Optional[bool] = None
     recruiting: Optional[bool] = None
     working_multi_club: Optional[bool] = None
     fee_member: Optional[Annotated[int, Field(ge=0, le=100000)]] = None
     fee_working: Optional[Annotated[int, Field(ge=0, le=100000)]] = None
-
-
-class ClubCreate(BaseModel):
-    name: str
-    abbr: str
-    description: str
-    color: str = "#D4561A"
-    tags: List[str]
-    is_open: bool = True
-    instagram: Optional[str] = None
-    linkedin: Optional[str] = None
 
 
 class ClubMembershipStatus(BaseModel):
@@ -103,7 +100,7 @@ class EventCreate(BaseModel):
     end_date: date
     reg_deadline: Optional[date] = None
     date_display: str
-    tags: List[str]
+    tags: Annotated[List[TagId], Field(min_length=1)]
     team_size: Optional[str] = None
     poster_url: Optional[str] = None
 
@@ -122,10 +119,9 @@ class EventUpdate(BaseModel):
     end_date: Optional[date] = None
     reg_deadline: Optional[date] = None
     date_display: Optional[str] = None
-    tags: Optional[List[str]] = None
+    tags: Optional[List[TagId]] = None
     team_size: Optional[str] = None
     poster_url: Optional[str] = None
-    is_published: Optional[bool] = None
 
     # ── New fields ──
     venue: Optional[str] = None
@@ -229,7 +225,7 @@ class ClubRequestIn(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=150)]
     abbr: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
     description: Text3000
-    tags: Annotated[List[str], Field(min_length=1, max_length=4)]
+    tags: Annotated[List[TagId], Field(min_length=1, max_length=4)]
     instagram: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
     linkedin: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = None
     affiliation: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]] = None
@@ -380,11 +376,52 @@ class ReactionIn(BaseModel):
     emoji: str
 
 
+# ── Working-team chat ────────────────────────────────────
+class ChatIn(BaseModel):
+    body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
+class ChatMessageOut(BaseModel):
+    id: int
+    club_id: int
+    author_id: Optional[int] = None
+    author_name: Optional[str] = None
+    body: str
+    created_at: datetime
+
+
+class ChatPage(BaseModel):
+    items: List[ChatMessageOut]     # oldest first
+    has_more: bool                  # older messages exist (ask with before_id = items[0].id)
+
+
 class RoleReview(BaseModel):
     """approve / reject a pending request, or end an active role (revoke)."""
     action: Literal["approve", "reject", "end"]
     # Approving: let this student hold team roles in more than one club
     multi_club_exception: bool = False
+
+
+# ── Club evaluations (the DSW's yearly audit) ────────────
+class EvaluationOut(BaseModel):
+    club_id: int
+    club_name: str
+    year: str
+    category: str
+    quality_of_events: float
+    sponsorship: float
+    student_engagement: float
+    dsw_component: float
+    faculty_component: float
+    total: float
+    remarks: Optional[str] = None
+    coordinators: List[str] = []           # names of the club's active faculty coordinators
+    invited_coordinators: List[str] = []   # emails from the records who haven't signed in yet
+
+
+class EvaluationList(BaseModel):
+    years: List[str]                       # every audited year, newest first
+    items: List[EvaluationOut]
 
 
 # ── Accounts (DSW / platform admin) ──────────────────────

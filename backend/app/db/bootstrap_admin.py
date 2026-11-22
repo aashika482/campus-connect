@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import hash_password
+from app.schemas.user import MIN_PASSWORD
 from app.db.database import AsyncSessionLocal, engine
 from app.models.audit import AuditLog
 from app.models.membership import TEAM_ROLES, ClubRoleStatus
@@ -31,9 +32,9 @@ async def main(email: str, revoke: bool):
         else:
             if user is None:
                 name = input("Name: ").strip()
-                password = getpass.getpass("Password (min 6 chars): ")
-                if not name or len(password) < 6:
-                    sys.exit("A name and a password of at least 6 characters are required")
+                password = getpass.getpass(f"Password (min {MIN_PASSWORD} chars): ")
+                if not name or len(password) < MIN_PASSWORD:
+                    sys.exit(f"A name and a password of at least {MIN_PASSWORD} characters are required")
                 user = User(name=name, email=email, password=hash_password(password))
                 db.add(user)
             # A platform admin runs the system, not a club

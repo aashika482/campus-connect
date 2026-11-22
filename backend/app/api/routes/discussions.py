@@ -12,7 +12,7 @@ from app.models.event import Event
 from app.models.membership import ClubRole, ClubRoleStatus, TEAM_ROLES
 from app.models.notification import Notification
 from app.models.user import User
-from app.core.deps import get_or_404, get_current_active_user, ensure_can_manage
+from app.core.deps import get_or_404, get_current_active_user, get_optional_user, ensure_can_manage, get_visible_event
 from app.schemas.event import (
     DiscussionOut, DiscussionPage, DiscussionCreate, DiscussionReply, DiscussionUpdate,
 )
@@ -142,8 +142,10 @@ async def list_discussions(
     before_id: Optional[int] = Query(None),
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(get_optional_user),
 ):
     """Paginated top-level comments for an event, newest first, with replies nested (oldest first)."""
+    await get_visible_event(db, event_id, user)
     return await _paginate_top_level(db, Discussion.event_id == event_id, before_id, limit)
 
 
@@ -157,7 +159,7 @@ async def create_discussion(
     """Any logged-in user can post a top-level comment.
     Anyone @mentioned gets a "mention" notification; the club's team (owner, editors, faculty) gets a "comment" one.
     """
-    event = await get_or_404(db, Event, event_id)
+    event = await get_visible_event(db, event_id, user)
 
     discussion = Discussion(
         event_id=event_id,
@@ -213,7 +215,7 @@ async def reply_to_discussion(
     The comment's author gets a "reply" notification (unless replying to themselves),
     and anyone else @mentioned gets a "mention" notification.
     """
-    event = await get_or_404(db, Event, event_id)
+    event = await get_visible_event(db, event_id, user)
 
     result = await db.execute(
         select(Discussion).where(Discussion.id == comment_id, Discussion.event_id == event_id)

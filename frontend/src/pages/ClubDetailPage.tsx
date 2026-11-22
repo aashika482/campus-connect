@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { clubsApi, announcementsApi, apiError } from '@/api/client'
 import { useUserClubs, useEventsWhere } from '@/hooks/useData'
+import { ClubChat } from './ClubChat'
 import { useAuthStore } from '@/context/authStore'
 import { useToastStore } from '@/context/toastStore'
-import { splitTags, TAG_COLORS, getEventColor, canManage, onWorkingTeam, activeRoles, getTimeAgo, ROLE_LABELS, REACTIONS } from '@/types'
+import { splitTags, TAG_COLORS, NOT_CATEGORIZED, getEventColor, canManage, onWorkingTeam, activeRoles, getTimeAgo, ROLE_LABELS, REACTIONS } from '@/types'
 import type { Club, Event, MyApplication, Roster, Announcement, Reaction, Benefit, MyLeaveRequest, LeaveScope } from '@/types'
 
 // ── Icons ─────────────────────────────────────────────────
@@ -108,6 +109,11 @@ export function ClubDetailPage() {
                   ))}
                 </div>
               )}
+              {tags.length === 0 && (
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--gray2)', marginBottom: 20 }}>
+                  {NOT_CATEGORIZED}{canManage(user, clubId) && ': pick its tags in the Club Dashboard → Settings'}
+                </div>
+              )}
 
               {/* Stats + actions row */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
@@ -130,7 +136,7 @@ export function ClubDetailPage() {
                 <div style={{ width: 1, height: 20, background: 'var(--dark4)' }} />
 
                 {/* Join button (students; there's no leaving from the app) */}
-                {(isMember || (canJoin && !club.is_private)) && <button
+                {(isMember || (canJoin && !club.is_private && club.is_open)) && <button
                   onClick={() => join(club, n => setClub(c => (c ? { ...c, member_count: n } : c)))}
                   disabled={isMember}
                   style={{
@@ -172,10 +178,12 @@ export function ClubDetailPage() {
                   ? <>Your membership runs until {fmtDay(membership.expires_on)}.</>
                   : club.is_private
                     ? <>This club is private and isn't taking members right now.</>
+                    : !club.is_open
+                    ? <>{club.name} isn't taking new members right now.</>
                     : <>Membership ₹{club.fee_member} a year · working team ₹{club.fee_working} a year, paid to the club.</>}
               </div>
 
-              {isMember && !isWorking && user?.account_type === 'student' && (
+              {isMember && !isWorking && !canManage(user, clubId) && user?.account_type === 'student' && (
                 <WorkingTeamApplication club={club} />
               )}
 
@@ -231,6 +239,9 @@ export function ClubDetailPage() {
         <div id="announcements" style={{ maxWidth: 1100, margin: '0 auto', padding: '0 40px 40px' }}>
           <SectionTitle kicker="Working team" title="Announcements" />
           <ClubAnnouncements clubId={clubId} canPost={canManage(user, clubId)} />
+          <div style={{ height: 32 }} />
+          <SectionTitle kicker="Working team" title="Team chat" />
+          <ClubChat clubId={clubId} canModerate={activeRoles(user, 'owner', 'editor').some(r => r.club_id === clubId)} />
         </div>
       )}
 
@@ -241,7 +252,7 @@ export function ClubDetailPage() {
       {user && (
         <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 40px 64px' }}>
           <SectionTitle kicker="This academic year" title="Members" />
-          <ClubRoster clubId={clubId} />
+          <ClubRoster clubId={clubId} hidden={club.is_private && !user.club_roles.some(r => r.club_id === clubId && r.status === 'active') && user.account_type !== 'dsw'} />
         </div>
       )}
     </div>
@@ -430,11 +441,12 @@ function LeaveRequestLink({ clubId, clubName, isWorking }: { clubId: number; clu
 }
 
 // ── Roster: names for everyone, details for the working team ─
-function ClubRoster({ clubId }: { clubId: number }) {
+function ClubRoster({ clubId, hidden }: { clubId: number; hidden: boolean }) {
   const [roster, setRoster] = useState<Roster | null>(null)
   const [query, setQuery] = useState('')
   useEffect(() => { clubsApi.roster(clubId).then(r => setRoster(r.data)).catch(() => setRoster({ detailed: false, items: [] })) }, [clubId])
 
+  if (hidden) return <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)' }}>This club is private: only its members see who's in it.</div>
   if (!roster) return <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)' }}>Loading…</div>
   if (roster.items.length === 0) return <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gray2)' }}>No members this year yet.</div>
 
