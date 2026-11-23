@@ -39,7 +39,7 @@ Owners, editors and faculty coordinators are the club's *team*: they post events
 | Routing      | React Router v6                                              |
 | Backend      | Python FastAPI (async)                                       |
 | ORM          | SQLAlchemy async                                             |
-| Database     | Neon (cloud PostgreSQL)                                      |
+| Database     | Neon (cloud PostgreSQL, Singapore; shared by the team)       |
 | Auth         | JWT (access + refresh tokens)                                |
 | Image Upload | Cloudinary (browser uploads, signed by the backend)          |
 | Deployment   | Railway (backend) + Vercel (frontend)                        |
@@ -208,11 +208,12 @@ npm run dev
 
 | Variable         | Description                                      |
 | ---------------- | ------------------------------------------------ |
-| `DATABASE_URL`   | Neon PostgreSQL connection string                |
+| `DATABASE_URL`   | Neon connection string, with connection pooling off (see `backend/.env.example`) |
 | `JWT_SECRET_KEY` | Secret key for signing JWTs                      |
 | `DEBUG`          | `False` in production                            |
 | `CORS_ORIGINS`   | Comma-separated allowed frontend origins (default `http://localhost:5173`) |
-| `DATABASE_SSL`   | `True` (default, Neon). `False` only for a local Postgres without SSL |
+| `DATABASE_SSL`   | `True` (default). `False` only for a local Postgres without SSL |
+| `DATABASE_SSL_VERIFY` | `True` (default, Neon). `False` for hosts whose certificate isn't publicly signed, e.g. Supabase |
 | `STUDENT_EMAIL_DOMAINS` / `FACULTY_EMAIL_DOMAINS` | Comma-separated college domains allowed to sign up (defaults `muj.manipal.edu` / `jaipur.manipal.edu`) |
 | `MAX_EDITORS_PER_CLUB` | Most active editors per club (default `5`; a club has one owner) |
 | `TIMEZONE` | The college's time zone for "today" (deadlines, event endings, 31 July). Default `Asia/Kolkata` |
@@ -269,7 +270,7 @@ Then set `MICROSOFT_CLIENT_ID` (Application / client ID) and `MICROSOFT_TENANT_I
 
 ### Next
 
-- **Going live** — Neon, Railway and Vercel; the Microsoft app registration and the college's email service; the final pre-handoff check (build, smoke test of every flow, secrets and `.env.example`)
+- **Going live** — Railway and Vercel (the database is already on Neon; put the backend in an Asian region too); the Microsoft app registration and the college's email service; the final pre-handoff check (build, smoke test of every flow, secrets and `.env.example`)
 
 ### Future updates
 

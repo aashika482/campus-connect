@@ -177,35 +177,42 @@ def read_sheet(path: str) -> list[dict]:
 async def run(path: str | None, year: str | None, replace: bool, assume_yes: bool = False) -> None:
     rows = read_sheet(path) if path else [dict(name=n) for n in CLUBS]
     async with AsyncSessionLocal() as db:
+        # A handful of big queries, not a few per club: a cloud database can be ~0.5 s away per round trip
         existing = {c.name.lower(): c for c in (await db.execute(select(Club))).scalars().all()}
-        created = invited = evaluated = 0
-        keep: set[int] = set()
+        new = []
         for row in rows:
-            club = existing.get(row["name"].lower())
-            if club is None:
+            if row["name"].lower() not in existing:
                 abbr, tags = CLUBS.get(row["name"], (row["name"].split()[0][:12], ""))
                 club = Club(name=row["name"], abbr=abbr, tags=tags,
                             description=f"{row['name']} hasn't added a description yet.",
                             color=CLUB_COLORS[sum(map(ord, row["name"])) % len(CLUB_COLORS)])
-                db.add(club)
-                await db.flush()
                 existing[club.name.lower()] = club
-                created += 1
-            keep.add(club.id)
-            if not year:
-                continue
+                new.append(club)
+        db.add_all(new)
+        await db.flush()   # one INSERT for every new club, giving them ids
+        created = len(new)
+        club_of = {row["name"]: existing[row["name"].lower()] for row in rows}
+        keep: set[int] = {c.id for c in club_of.values()}
 
-            quality, sponsorship, engagement, dsw, faculty, total = row["marks"]
-            await db.execute(delete(ClubEvaluation).where(ClubEvaluation.club_id == club.id, ClubEvaluation.year == year))
-            db.add(ClubEvaluation(club_id=club.id, year=year, category=row["category"], quality_of_events=quality,
-                                  sponsorship=sponsorship, student_engagement=engagement, dsw_component=dsw,
-                                  faculty_component=faculty, total=total, remarks=row["remarks"]))
-            evaluated += 1
-            for email in [e for e in row["emails"] if e not in SKIP_INVITES.get(row["name"], set())]:
-                if not (await db.execute(select(CoordinatorInvite.id).where(
-                        CoordinatorInvite.club_id == club.id, CoordinatorInvite.email == email))).first():
-                    db.add(CoordinatorInvite(club_id=club.id, email=email))
-                    invited += 1
+        evaluated = invited = 0
+        if year:
+            # This year's evaluations are replaced as a whole
+            await db.execute(delete(ClubEvaluation).where(ClubEvaluation.year == year, ClubEvaluation.club_id.in_(keep)))
+            invites = set((await db.execute(
+                select(CoordinatorInvite.club_id, CoordinatorInvite.email).where(CoordinatorInvite.club_id.in_(keep))
+            )).all())
+            for row in rows:
+                club = club_of[row["name"]]
+                quality, sponsorship, engagement, dsw, faculty, total = row["marks"]
+                db.add(ClubEvaluation(club_id=club.id, year=year, category=row["category"], quality_of_events=quality,
+                                      sponsorship=sponsorship, student_engagement=engagement, dsw_component=dsw,
+                                      faculty_component=faculty, total=total, remarks=row["remarks"]))
+                evaluated += 1
+                for email in [e for e in row["emails"] if e not in SKIP_INVITES.get(row["name"], set())]:
+                    if (club.id, email) not in invites:
+                        invites.add((club.id, email))
+                        db.add(CoordinatorInvite(club_id=club.id, email=email))
+                        invited += 1
 
         removed = 0
         if replace:

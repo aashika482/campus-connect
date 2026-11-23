@@ -15,10 +15,13 @@ class Settings(BaseSettings):
     APP_NAME: str = "CamPulse"
     DEBUG: bool = False
 
-    # Database — paste your Neon connection string here
+    # Database — the Neon connection string, unpooled (see backend/.env.example)
     DATABASE_URL: str
-    # Neon requires SSL. Set False only for a local Postgres (dev / tests).
+    # Cloud Postgres requires SSL. Set False only for a local Postgres (dev / tests).
     DATABASE_SSL: bool = True
+    # Check the server's certificate too. Supabase's isn't signed by a public authority, so set this to
+    # False for Supabase: the connection stays encrypted, the certificate just isn't verified.
+    DATABASE_SSL_VERIFY: bool = True
 
     # JWT
     JWT_SECRET_KEY: str
@@ -84,6 +87,13 @@ class Settings(BaseSettings):
         """Which kind of college account this email may create, or None if its domain isn't allowed."""
         domain = email.rsplit("@", 1)[-1].lower()
         return next((kind for kind, domains in self.email_domains.items() if domain in domains), None)
+
+    @property
+    def database_ssl(self) -> bool | str:
+        """asyncpg's ssl argument: verify the certificate, only encrypt ("require"), or off."""
+        if not self.DATABASE_SSL:
+            return False
+        return True if self.DATABASE_SSL_VERIFY else "require"
 
     @property
     def microsoft_enabled(self) -> bool:
